@@ -42,7 +42,7 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   final _nameController = TextEditingController(text: 'Astrologer');
   DateTime _birthDate = DateTime(1991, 12, 29);
   TimeOfDay _birthTime = const TimeOfDay(hour: 13, minute: 30);
-  final _cityController = TextEditingController();
+  final _cityController = TextEditingController(text: 'Ho Chi Minh City');
   final _latitudeController = TextEditingController(text: '10.7765713');
   final _longitudeController = TextEditingController(text: '106.7012093');
   final _timezoneController = TextEditingController(text: 'Asia/Ho_Chi_Minh');
@@ -50,9 +50,11 @@ class _PredictionsScreenState extends State<PredictionsScreen>
 
   // City → lat/lng geocoding state. `_lastGeocodedCity` lets us avoid
   // re-running the lookup on every fetch when the city hasn't changed.
+  // Initialized to the default city above so the first fetch doesn't try
+  // to re-geocode "Ho Chi Minh City" (lat/lng already match it).
   bool _geocoding = false;
   String? _cityError;
-  String _lastGeocodedCity = '';
+  String _lastGeocodedCity = 'Ho Chi Minh City';
 
   // Latest in-flight autocomplete query — when the user keeps typing, we
   // discard stale Photon responses by checking that the query for which a
@@ -193,7 +195,17 @@ class _PredictionsScreenState extends State<PredictionsScreen>
         '?q=${Uri.encodeQueryComponent(q)}'
         '&limit=8&lang=en',
       );
-      final res = await http.get(url).timeout(const Duration(seconds: 8));
+      // Komoot's Photon blocks requests sent with the default Dart
+      // User-Agent (Dart/x.y (dart:io)) — they require a meaningful UA per
+      // their fair-use policy. Identify the app explicitly.
+      final res = await http.get(
+        url,
+        headers: const {
+          'User-Agent':
+              'CosmicTransit/1.0 (https://github.com/anhvule/cosmos-transit-ui)',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 8));
       if (q != _latestSearchQuery) return const [];
       if (res.statusCode != 200) {
         _searchStatus.value = 'HTTP ${res.statusCode} from Photon';
