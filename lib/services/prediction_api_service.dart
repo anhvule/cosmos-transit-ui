@@ -3,6 +3,9 @@ import 'package:http/http.dart' as http;
 import '../models/prediction_reading.dart';
 import '../models/investment_forecast.dart';
 import '../models/dasha_reading.dart';
+import '../models/essence_cycle.dart';
+import '../models/yearly_summary.dart';
+import '../models/monthly_prediction.dart';
 import 'api_cache_service.dart';
 
 class PredictionRequest {
@@ -88,6 +91,12 @@ extension PredictionAreaLabel on PredictionArea {
 class PredictionApiService {
   static const String _baseUrl =
       'https://radiant-mountain-37973-4b7f67ce5fbe.herokuapp.com';
+
+  /// Last raw response body the essence-cycle endpoint returned (or last
+  /// cached body it served). Exposed solely for the in-app debug overlay
+  /// — never read by production code paths.
+  static String? lastEssenceCycleRawBody;
+  static String? lastEssenceCycleSource; // 'cache' | 'network'
 
   static Future<PredictionReading> fetch(
     PredictionArea area,
@@ -276,6 +285,165 @@ class PredictionApiService {
       }
       throw Exception(
           'Failed to fetch dasha: ${response.statusCode} ${response.body}');
+    } finally {
+      client.close();
+    }
+  }
+
+  /// Tajika annual summary — Combined effect of factors analysed.
+  static Future<YearlySummary> fetchYearlySummary({
+    required String name,
+    required String birthDate,
+    required String birthTime,
+    required double latitude,
+    required double longitude,
+    required String timezone,
+    required int year,
+    bool forceRefresh = false,
+  }) async {
+    const endpoint = 'yearly-summary';
+    final body = {
+      ..._baseBody(
+        name: name,
+        birthDate: birthDate,
+        birthTime: birthTime,
+        latitude: latitude,
+        longitude: longitude,
+        timezone: timezone,
+      ),
+      'year': year,
+    };
+
+    if (!forceRefresh) {
+      // Annual chart is fixed for a given (birth, year), so monthly cache
+      // is more than enough.
+      final cached =
+          ApiCacheService.read(endpoint, body, scope: CacheScope.monthly);
+      if (cached != null) return YearlySummary.fromJson(cached);
+    }
+
+    final client = http.Client();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('$_baseUrl/api/$endpoint'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        await ApiCacheService.write(endpoint, body, decoded,
+            scope: CacheScope.monthly);
+        return YearlySummary.fromJson(decoded);
+      }
+      throw Exception(
+          'Failed to fetch yearly summary: ${response.statusCode} ${response.body}');
+    } finally {
+      client.close();
+    }
+  }
+
+  /// Sun-transit monthly predictions for a Tajika year.
+  static Future<MonthlyPrediction> fetchMonthlyPrediction({
+    required String name,
+    required String birthDate,
+    required String birthTime,
+    required double latitude,
+    required double longitude,
+    required String timezone,
+    required int year,
+    bool forceRefresh = false,
+  }) async {
+    const endpoint = 'monthly-prediction';
+    final body = {
+      ..._baseBody(
+        name: name,
+        birthDate: birthDate,
+        birthTime: birthTime,
+        latitude: latitude,
+        longitude: longitude,
+        timezone: timezone,
+      ),
+      'year': year,
+    };
+
+    if (!forceRefresh) {
+      final cached =
+          ApiCacheService.read(endpoint, body, scope: CacheScope.monthly);
+      if (cached != null) return MonthlyPrediction.fromJson(cached);
+    }
+
+    final client = http.Client();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('$_baseUrl/api/$endpoint'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          // The backend computes a Sun-return bisect plus 12 sign ingresses,
+          // each spawning a kerykeion subprocess. On a cold dyno it can take
+          // close to 60s.
+          .timeout(const Duration(seconds: 90));
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        await ApiCacheService.write(endpoint, body, decoded,
+            scope: CacheScope.monthly);
+        return MonthlyPrediction.fromJson(decoded);
+      }
+      throw Exception(
+          'Failed to fetch monthly prediction: ${response.statusCode} ${response.body}');
+    } finally {
+      client.close();
+    }
+  }
+
+  static Future<EssenceCycle> fetchEssenceCycle({
+    required String fullName,
+    required String dob, // YYYY-MM-DD
+    required int startYear,
+    bool forceRefresh = false,
+  }) async {
+    const endpoint = 'essence-cycle';
+    final body = <String, dynamic>{
+      'full_name': fullName,
+      'dob': dob,
+      'start_year': startYear,
+    };
+
+    if (!forceRefresh) {
+      // Numerology data is fixed for a given (name, dob, start_year);
+      // monthly scope is plenty without ever going stale visibly.
+      final cached = ApiCacheService.read(endpoint, body,
+          scope: CacheScope.monthly);
+      if (cached != null) {
+        lastEssenceCycleRawBody =
+            const JsonEncoder.withIndent('  ').convert(cached);
+        lastEssenceCycleSource = 'cache';
+        return EssenceCycle.fromJson(cached);
+      }
+    }
+
+    final client = http.Client();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('$_baseUrl/api/$endpoint'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 30));
+      if (response.statusCode == 200) {
+        lastEssenceCycleRawBody = response.body;
+        lastEssenceCycleSource = 'network';
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        await ApiCacheService.write(endpoint, body, decoded,
+            scope: CacheScope.monthly);
+        return EssenceCycle.fromJson(decoded);
+      }
+      throw Exception(
+          'Failed to fetch essence cycle: ${response.statusCode} ${response.body}');
     } finally {
       client.close();
     }

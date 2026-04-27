@@ -11,6 +11,7 @@ import '../../services/storage_service.dart';
 import '../investment_forecast/investment_forecast_screen.dart';
 import '../dasha/dasha_screen.dart';
 import '../essence_cycle/essence_cycle_screen.dart';
+import '../yearly/yearly_screen.dart';
 import '../../widgets/cosmic_loader.dart';
 
 /// One autocomplete suggestion returned by the Photon (OpenStreetMap) API.
@@ -346,6 +347,23 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     ));
   }
 
+  void _openYearly() {
+    final req = _buildRequest();
+    if (req == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill all fields correctly.')),
+      );
+      return;
+    }
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => YearlyScreen(
+        request: req,
+        // Default to the current year — the screen has its own year stepper.
+        initialYear: DateTime.now().year,
+      ),
+    ));
+  }
+
   void _openForecast() {
     final req = _buildRequest();
     if (req == null) {
@@ -610,6 +628,9 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                   case _NavTarget.investmentForecast:
                     _openForecast();
                     break;
+                  case _NavTarget.varshaphal:
+                    _openYearly();
+                    break;
                 }
               },
               itemBuilder: (_) => const [
@@ -629,6 +650,12 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                   child: _MenuRow(
                       icon: Icons.insights,
                       label: 'Investment Forecast'),
+                ),
+                PopupMenuItem(
+                  value: _NavTarget.varshaphal,
+                  child: _MenuRow(
+                      icon: Icons.calendar_today_outlined,
+                      label: 'Varshaphal (Yearly)'),
                 ),
               ],
             ),
@@ -1163,7 +1190,7 @@ class _SectionHeader extends StatelessWidget {
 }
 
 /// Targets for the header-bar overflow menu.
-enum _NavTarget { essenceCycle, dasha, investmentForecast }
+enum _NavTarget { essenceCycle, dasha, investmentForecast, varshaphal }
 
 class _MenuRow extends StatelessWidget {
   final IconData icon;

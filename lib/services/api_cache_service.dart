@@ -21,6 +21,18 @@ class ApiCacheService {
   static const String _boxName = 'cache';
   static const String _keyPrefix = 'api:';
 
+  /// Bump this when the API contract changes in a way that would make
+  /// cached entries stale (e.g. backend bug fix that alters response
+  /// values for the same inputs). All entries not matching the current
+  /// version are evicted by [sweepStaleEntries] on app start.
+  ///
+  /// History:
+  ///   v1 — initial cache release.
+  ///   v2 — backend essence-cycle off-by-one transit fix + shifted
+  ///        duality convention (commits 84d0b5a, 544b51a). Older
+  ///        entries hold the buggy values and must be invalidated.
+  static const String _cacheVersion = 'v2';
+
   static Box<String> get _box => Hive.box<String>(_boxName);
 
   static String _pad2(int n) => n.toString().padLeft(2, '0');
@@ -70,7 +82,7 @@ class ApiCacheService {
     Map<String, dynamic> payload,
     CacheScope scope,
   ) =>
-      '$_keyPrefix$endpoint:${_bucketFor(scope)}:${_inputHash(payload)}';
+      '$_keyPrefix$_cacheVersion:$endpoint:${_bucketFor(scope)}:${_inputHash(payload)}';
 
   /// Returns the cached decoded JSON for the current scope bucket, or null.
   static Map<String, dynamic>? read(
@@ -102,9 +114,36 @@ class ApiCacheService {
     }
   }
 
-  /// Removes any `api:` entries whose encoded bucket no longer matches the
-  /// current equivalent (today / this week / this month). Cheap prefix scan.
+  /// One-time hard reset of every `api:` entry the first time the app
+  /// runs at a given cache version. Belt-and-suspenders so a backend
+  /// bug fix can't be masked by client-side caching.
+  static const String _migrationKey = '__api_cache_migration__';
+
+  static Future<void> _migrateForCurrentVersion() async {
+    try {
+      final completed = _box.get(_migrationKey);
+      if (completed == _cacheVersion) return;
+      final toDelete = _box.keys
+          .whereType<String>()
+          .where((k) => k.startsWith(_keyPrefix))
+          .toList();
+      if (toDelete.isNotEmpty) {
+        await _box.deleteAll(toDelete);
+        debugPrint(
+            'ApiCacheService: cleared ${toDelete.length} entries for migration → $_cacheVersion');
+      }
+      await _box.put(_migrationKey, _cacheVersion);
+    } catch (e) {
+      debugPrint('ApiCacheService._migrateForCurrentVersion error: $e');
+    }
+  }
+
+  /// Removes any `api:` entries that either belong to an older cache
+  /// version OR whose encoded bucket no longer matches the current
+  /// equivalent (today / this week / this month). Cheap prefix scan.
+  /// Also runs the one-time version migration before the per-key sweep.
   static Future<void> sweepStaleEntries() async {
+    await _migrateForCurrentVersion();
     try {
       final currentDaily = _bucketFor(CacheScope.daily);
       final currentWeekly = _bucketFor(CacheScope.weekly);
@@ -113,13 +152,28 @@ class ApiCacheService {
       for (final key in _box.keys) {
         if (key is! String) continue;
         if (!key.startsWith(_keyPrefix)) continue;
-        // Key shape: api:<endpoint>:<scopePrefix:bucket>:<hash>
-        // scopePrefix+bucket is the 3rd colon-separated chunk joined with ':'
-        // — split with limit so we preserve any ':' inside the endpoint or hash.
+        // Versioned key shape:    api:<ver>:<endpoint>:<scope:bucket>:<hash>
+        // Pre-version (legacy):   api:<endpoint>:<scope:bucket>:<hash>
         final parts = key.split(':');
-        if (parts.length < 5) continue;
-        final bucket = '${parts[2]}:${parts[3]}';
-        final scopeMarker = parts[2];
+        // Detect & evict legacy (pre-version) entries — they always have
+        // exactly 5 chunks where parts[1] is the endpoint name (not "vN").
+        final isVersioned = parts.length >= 2 && parts[1].startsWith('v');
+        if (!isVersioned) {
+          toDelete.add(key);
+          continue;
+        }
+        // Versioned key needs at least 6 chunks: api:vN:endpoint:scope:bucket:hash
+        if (parts.length < 6) {
+          toDelete.add(key);
+          continue;
+        }
+        // Different version → stale, drop it.
+        if (parts[1] != _cacheVersion) {
+          toDelete.add(key);
+          continue;
+        }
+        final scopeMarker = parts[3];
+        final bucket = '${parts[3]}:${parts[4]}';
         String current;
         switch (scopeMarker) {
           case 'd':

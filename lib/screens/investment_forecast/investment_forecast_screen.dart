@@ -270,6 +270,7 @@ class _InvestmentForecastScreenState extends State<InvestmentForecastScreen>
           ),
           const SizedBox(width: 8),
           GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: _loadingWeekly ? null : () => _fetchWeekly(),
             onLongPress: _loadingWeekly
                 ? null
@@ -333,6 +334,7 @@ class _InvestmentForecastScreenState extends State<InvestmentForecastScreen>
           ),
           const SizedBox(width: 8),
           GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: _loadingMonthly ? null : () => _fetchMonthly(),
             onLongPress: _loadingMonthly
                 ? null

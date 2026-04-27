@@ -85,8 +85,18 @@ class _DashaScreenState extends State<DashaScreen> {
         title: const Text('Vimshottari Dasha'),
         actions: [
           GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: _loading ? null : () => _fetch(),
-            onLongPress: _loading ? null : () => _fetch(forceRefresh: true),
+            onLongPress: _loading
+                ? null
+                : () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Bypassing cache — refetching…'),
+                          duration: Duration(seconds: 1)),
+                    );
+                    _fetch(forceRefresh: true);
+                  },
             child: const Padding(
               padding: EdgeInsets.all(12),
               child: Icon(Icons.refresh, color: Colors.white70),
