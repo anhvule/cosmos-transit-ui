@@ -153,37 +153,40 @@ class _YearlyScreenState extends State<YearlyScreen>
             ),
           ),
         ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(96),
-          child: Column(
-            children: [
-              _buildYearStepper(),
-              TabBar(
-                controller: _tabs,
-                indicatorColor: const Color(0xFF7C4DFF),
-                labelColor: Colors.white,
-                unselectedLabelColor: Colors.white54,
-                tabs: const [
-                  Tab(
-                      icon: Icon(Icons.assessment_outlined, size: 18),
-                      text: 'Combined Effect'),
-                  Tab(
-                      icon: Icon(Icons.calendar_view_month, size: 18),
-                      text: 'Monthly'),
-                ],
-              ),
-            ],
-          ),
+        // Only the TabBar lives in the AppBar bottom — the year stepper sits
+        // in the body (below the AppBar) so its chevron icon buttons can't
+        // visually overlap the AppBar's leading back arrow or trailing
+        // refresh button.
+        bottom: TabBar(
+          controller: _tabs,
+          indicatorColor: const Color(0xFF7C4DFF),
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white54,
+          tabs: const [
+            Tab(
+                icon: Icon(Icons.assessment_outlined, size: 18),
+                text: 'Combined Effect'),
+            Tab(
+                icon: Icon(Icons.calendar_view_month, size: 18),
+                text: 'Monthly'),
+          ],
         ),
       ),
       body: SafeArea(
         top: false,
         bottom: false,
-        child: TabBarView(
-          controller: _tabs,
+        child: Column(
           children: [
-            _buildSummaryTab(),
-            _buildMonthlyTab(),
+            _buildYearStepper(),
+            Expanded(
+              child: TabBarView(
+                controller: _tabs,
+                children: [
+                  _buildSummaryTab(),
+                  _buildMonthlyTab(),
+                ],
+              ),
+            ),
           ],
         ),
       ),

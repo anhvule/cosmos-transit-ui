@@ -6,6 +6,7 @@ import '../models/dasha_reading.dart';
 import '../models/essence_cycle.dart';
 import '../models/yearly_summary.dart';
 import '../models/monthly_prediction.dart';
+import '../models/wealth_analysis.dart';
 import 'api_cache_service.dart';
 
 class PredictionRequest {
@@ -367,10 +368,15 @@ class PredictionApiService {
       ),
       'year': year,
     };
+    // Cache key carries a schema version so old flat-string `prediction`
+    // payloads cached before the work/health/relationship/investment
+    // restructuring are not reused (the new model parses them to empty).
+    // Bump this whenever the response shape changes.
+    final cacheBody = {...body, '_schema': 2};
 
     if (!forceRefresh) {
-      final cached =
-          ApiCacheService.read(endpoint, body, scope: CacheScope.monthly);
+      final cached = ApiCacheService.read(endpoint, cacheBody,
+          scope: CacheScope.monthly);
       if (cached != null) return MonthlyPrediction.fromJson(cached);
     }
 
@@ -388,12 +394,63 @@ class PredictionApiService {
           .timeout(const Duration(seconds: 90));
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-        await ApiCacheService.write(endpoint, body, decoded,
+        await ApiCacheService.write(endpoint, cacheBody, decoded,
             scope: CacheScope.monthly);
         return MonthlyPrediction.fromJson(decoded);
       }
       throw Exception(
           'Failed to fetch monthly prediction: ${response.statusCode} ${response.body}');
+    } finally {
+      client.close();
+    }
+  }
+
+  /// Vedic wealth analysis from the natal chart — five-section report
+  /// (lagna, nakshatra, house analysis, hora, yogas).
+  static Future<WealthAnalysis> fetchWealthAnalysis({
+    required String name,
+    required String birthDate,
+    required String birthTime,
+    required double latitude,
+    required double longitude,
+    required String timezone,
+    bool forceRefresh = false,
+  }) async {
+    const endpoint = 'wealth-analysis';
+    final body = _baseBody(
+      name: name,
+      birthDate: birthDate,
+      birthTime: birthTime,
+      latitude: latitude,
+      longitude: longitude,
+      timezone: timezone,
+    );
+
+    if (!forceRefresh) {
+      // Natal chart never changes for a given (birth) — monthly cache scope
+      // is more than sufficient.
+      final cached =
+          ApiCacheService.read(endpoint, body, scope: CacheScope.monthly);
+      if (cached != null) return WealthAnalysis.fromJson(cached);
+    }
+
+    final client = http.Client();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('$_baseUrl/api/$endpoint'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        await ApiCacheService.write(endpoint, body, decoded,
+            scope: CacheScope.monthly);
+        return WealthAnalysis.fromJson(decoded);
+      }
+      throw Exception(
+          'Failed to fetch wealth analysis: ${response.statusCode} ${response.body}');
     } finally {
       client.close();
     }
