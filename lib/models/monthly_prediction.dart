@@ -31,6 +31,41 @@ class MonthlyPrediction {
       );
 }
 
+/// Per-period prediction split into four life-area categories. The backend
+/// composes each string by concatenating the Sun-house-from-Moon × bindu-band
+/// template with the Jupiter-house-from-Moon modifier for that category.
+class MonthlyPredictionText {
+  final String work;
+  final String health;
+  final String relationship;
+  final String investment;
+
+  const MonthlyPredictionText({
+    required this.work,
+    required this.health,
+    required this.relationship,
+    required this.investment,
+  });
+
+  static const empty = MonthlyPredictionText(
+    work: '',
+    health: '',
+    relationship: '',
+    investment: '',
+  );
+
+  factory MonthlyPredictionText.fromJson(Map<String, dynamic> j) =>
+      MonthlyPredictionText(
+        work: j['work'] as String? ?? '',
+        health: j['health'] as String? ?? '',
+        relationship: j['relationship'] as String? ?? '',
+        investment: j['investment'] as String? ?? '',
+      );
+
+  bool get isEmpty =>
+      work.isEmpty && health.isEmpty && relationship.isEmpty && investment.isEmpty;
+}
+
 class MonthlyPeriod {
   final String fromDate; // YYYY-MM-DD
   final String toDate;   // YYYY-MM-DD
@@ -43,7 +78,7 @@ class MonthlyPeriod {
   final int jupiterHouseFromMoon;
   final String band; // "high" | "neutral" | "low"
   final String theme;
-  final String prediction;
+  final MonthlyPredictionText prediction;
 
   MonthlyPeriod({
     required this.fromDate,
@@ -60,20 +95,29 @@ class MonthlyPeriod {
     required this.prediction,
   });
 
-  factory MonthlyPeriod.fromJson(Map<String, dynamic> j) => MonthlyPeriod(
-        fromDate: j['fromDate'] as String,
-        toDate: j['toDate'] as String,
-        sunSign: j['sunSign'] as String,
-        sunSignVedic:
-            j['sunSignVedic'] as String? ?? j['sunSign'] as String,
-        jupiterSign: j['jupiterSign'] as String,
-        jupiterSignVedic:
-            j['jupiterSignVedic'] as String? ?? j['jupiterSign'] as String,
-        sarvashtavargaPoints: (j['sarvashtavargaPoints'] as num).toInt(),
-        sunHouseFromMoon: (j['sunHouseFromMoon'] as num).toInt(),
-        jupiterHouseFromMoon: (j['jupiterHouseFromMoon'] as num).toInt(),
-        band: j['band'] as String? ?? 'neutral',
-        theme: j['theme'] as String? ?? '',
-        prediction: j['prediction'] as String? ?? '',
-      );
+  factory MonthlyPeriod.fromJson(Map<String, dynamic> j) {
+    // Be tolerant of pre-migration cached payloads where `prediction` was
+    // a flat string. Drop the legacy text and fall back to empty so we
+    // never crash on `cast<String>`-into-Map.
+    final rawPrediction = j['prediction'];
+    final prediction = rawPrediction is Map<String, dynamic>
+        ? MonthlyPredictionText.fromJson(rawPrediction)
+        : MonthlyPredictionText.empty;
+    return MonthlyPeriod(
+      fromDate: j['fromDate'] as String,
+      toDate: j['toDate'] as String,
+      sunSign: j['sunSign'] as String,
+      sunSignVedic:
+          j['sunSignVedic'] as String? ?? j['sunSign'] as String,
+      jupiterSign: j['jupiterSign'] as String,
+      jupiterSignVedic:
+          j['jupiterSignVedic'] as String? ?? j['jupiterSign'] as String,
+      sarvashtavargaPoints: (j['sarvashtavargaPoints'] as num).toInt(),
+      sunHouseFromMoon: (j['sunHouseFromMoon'] as num).toInt(),
+      jupiterHouseFromMoon: (j['jupiterHouseFromMoon'] as num).toInt(),
+      band: j['band'] as String? ?? 'neutral',
+      theme: j['theme'] as String? ?? '',
+      prediction: prediction,
+    );
+  }
 }

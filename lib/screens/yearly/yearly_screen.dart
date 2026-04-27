@@ -807,17 +807,77 @@ class _MonthlyPeriodCard extends StatelessWidget {
               ),
             ),
           ],
-          if (period.prediction.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              period.prediction,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.85),
-                fontSize: 13,
-                height: 1.45,
-              ),
+          if (!period.prediction.isEmpty) ...[
+            const SizedBox(height: 8),
+            _categoryRow(
+              icon: Icons.work_outline,
+              label: 'Work',
+              text: period.prediction.work,
+              color: color,
+            ),
+            _categoryRow(
+              icon: Icons.favorite_border,
+              label: 'Health',
+              text: period.prediction.health,
+              color: color,
+            ),
+            _categoryRow(
+              icon: Icons.people_outline,
+              label: 'Relationship',
+              text: period.prediction.relationship,
+              color: color,
+            ),
+            _categoryRow(
+              icon: Icons.account_balance_wallet_outlined,
+              label: 'Investment',
+              text: period.prediction.investment,
+              color: color,
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _categoryRow({
+    required IconData icon,
+    required String label,
+    required String text,
+    required Color color,
+  }) {
+    if (text.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 14, color: color.withValues(alpha: 0.85)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label.toUpperCase(),
+                  style: TextStyle(
+                    color: color.withValues(alpha: 0.85),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  text,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.85),
+                    fontSize: 12.5,
+                    height: 1.45,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
