@@ -123,6 +123,7 @@ class _PredictionsScreenState extends State<PredictionsScreen>
         _geocoding = false;
         _lastGeocodedCity = city;
       });
+      _showCoordinatesAlert(city, loc.latitude, loc.longitude);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -130,6 +131,55 @@ class _PredictionsScreenState extends State<PredictionsScreen>
         _cityError = 'Lookup failed: ${e.toString()}';
       });
     }
+  }
+
+  /// Pop a confirmation dialog after a successful geocode so the user can
+  /// see the coordinates that will be sent to the API.
+  void _showCoordinatesAlert(String city, double lat, double lng) {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1745),
+        title: const Text(
+          'Coordinates updated',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              city,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Latitude:  ${lat.toStringAsFixed(7)}',
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Longitude: ${lng.toStringAsFixed(7)}',
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF7C4DFF),
+            ),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   String _formatDate(DateTime d) =>
