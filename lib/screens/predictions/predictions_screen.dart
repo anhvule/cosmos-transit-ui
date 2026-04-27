@@ -61,12 +61,6 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   // result arrived still matches the one the user is on.
   String _latestSearchQuery = '';
 
-  // Visible debug status under the city field so we can see what the
-  // autocomplete is actually doing on-device. Backed by a ValueNotifier so
-  // we can update it from inside the async optionsBuilder without
-  // triggering rebuilds during the build phase.
-  final ValueNotifier<String?> _searchStatus = ValueNotifier<String?>(null);
-
   // External controller + focus node so RawAutocomplete uses our existing
   // _cityController. (The basic Autocomplete widget owns its own controller
   // internally, which makes pre-fill from saved profile awkward to keep
@@ -126,7 +120,6 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     _nameController.dispose();
     _cityController.dispose();
     _cityFocusNode.dispose();
-    _searchStatus.dispose();
     _latitudeController.dispose();
     _longitudeController.dispose();
     _timezoneController.dispose();
@@ -180,11 +173,7 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   Future<Iterable<_PlaceSuggestion>> _searchPlaces(String query) async {
     final q = query.trim();
     _latestSearchQuery = q;
-    if (q.length < 2) {
-      _searchStatus.value = null;
-      return const [];
-    }
-    _searchStatus.value = 'Searching "$q"…';
+    if (q.length < 2) return const [];
     // Small debounce — with the per-keystroke optionsBuilder calls Flutter
     // makes, this collapses bursts into one in-flight request.
     await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -207,10 +196,7 @@ class _PredictionsScreenState extends State<PredictionsScreen>
         },
       ).timeout(const Duration(seconds: 8));
       if (q != _latestSearchQuery) return const [];
-      if (res.statusCode != 200) {
-        _searchStatus.value = 'HTTP ${res.statusCode} from Photon';
-        return const [];
-      }
+      if (res.statusCode != 200) return const [];
       final body = jsonDecode(res.body);
       final features = (body is Map && body['features'] is List)
           ? body['features'] as List
@@ -259,12 +245,8 @@ class _PredictionsScreenState extends State<PredictionsScreen>
         if (country.isNotEmpty) parts.add(country);
         results.add(_PlaceSuggestion(parts.join(', '), lat, lng));
       }
-      _searchStatus.value = results.isEmpty
-          ? 'No matching cities for "$q"'
-          : '${results.length} suggestion(s) — tap one';
       return results;
-    } catch (e) {
-      _searchStatus.value = 'Network error: $e';
+    } catch (_) {
       return const [];
     }
   }
@@ -734,18 +716,35 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                     );
                   },
                   optionsViewBuilder: (context, onSelected, options) {
+                    // Darker than the form panel (which sits on 0xFF1A1745)
+                    // plus a thin purple border so the dropdown reads as a
+                    // distinct floating surface, not a flat continuation of
+                    // the field below it.
                     return Align(
                       alignment: Alignment.topLeft,
                       child: Material(
-                        color: const Color(0xFF1A1745),
-                        elevation: 4,
-                        borderRadius: BorderRadius.circular(8),
-                        child: ConstrainedBox(
+                        color: const Color(0xFF06041A),
+                        elevation: 8,
+                        borderRadius: BorderRadius.circular(10),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: const Color(0xFF7C4DFF)
+                                  .withValues(alpha: 0.45),
+                              width: 1,
+                            ),
+                          ),
                           constraints: const BoxConstraints(maxHeight: 240),
-                          child: ListView.builder(
+                          child: ListView.separated(
                             padding: EdgeInsets.zero,
                             shrinkWrap: true,
                             itemCount: options.length,
+                            separatorBuilder: (context, index) => Divider(
+                              height: 1,
+                              thickness: 1,
+                              color: Colors.white.withValues(alpha: 0.06),
+                            ),
                             itemBuilder: (context, i) {
                               final s = options.elementAt(i);
                               return InkWell(
@@ -796,24 +795,6 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                 ),
               ),
             ],
-          ),
-          // Diagnostic status — temporary, lets us see whether Photon is
-          // being hit and what it returned. Hidden when no search is active.
-          ValueListenableBuilder<String?>(
-            valueListenable: _searchStatus,
-            builder: (context, status, _) {
-              if (status == null) return const SizedBox.shrink();
-              return Padding(
-                padding: const EdgeInsets.only(top: 4, left: 4),
-                child: Text(
-                  status,
-                  style: TextStyle(
-                    color: Colors.amber.withValues(alpha: 0.85),
-                    fontSize: 10,
-                  ),
-                ),
-              );
-            },
           ),
           const SizedBox(height: 8),
           Row(
