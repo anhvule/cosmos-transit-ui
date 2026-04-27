@@ -1,5 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import '../../models/prediction_reading.dart';
 import '../../services/prediction_api_service.dart';
@@ -8,6 +12,20 @@ import '../investment_forecast/investment_forecast_screen.dart';
 import '../dasha/dasha_screen.dart';
 import '../essence_cycle/essence_cycle_screen.dart';
 import '../../widgets/cosmic_loader.dart';
+
+/// One autocomplete suggestion returned by the Photon (OpenStreetMap) API.
+/// Carries the coordinates inline so selecting a suggestion populates the
+/// hidden lat/lng controllers without a second network round-trip.
+class _PlaceSuggestion {
+  final String displayName;
+  final double latitude;
+  final double longitude;
+
+  const _PlaceSuggestion(this.displayName, this.latitude, this.longitude);
+
+  @override
+  String toString() => displayName;
+}
 
 class PredictionsScreen extends StatefulWidget {
   const PredictionsScreen({super.key});
@@ -35,6 +53,11 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   bool _geocoding = false;
   String? _cityError;
   String _lastGeocodedCity = '';
+
+  // Latest in-flight autocomplete query — when the user keeps typing, we
+  // discard stale Photon responses by checking that the query for which a
+  // result arrived still matches the one the user is on.
+  String _latestSearchQuery = '';
 
   static DateTime _todayDateOnly() {
     final n = DateTime.now();
@@ -130,6 +153,58 @@ class _PredictionsScreenState extends State<PredictionsScreen>
         _geocoding = false;
         _cityError = 'Lookup failed: ${e.toString()}';
       });
+    }
+  }
+
+  /// Query Photon (https://photon.komoot.io) for city/place suggestions
+  /// matching `query`. Free, no API key, returns coordinates inline. Returns
+  /// an empty list for short queries, network errors, or stale results
+  /// (when the user has typed more characters since this call started).
+  Future<Iterable<_PlaceSuggestion>> _searchPlaces(String query) async {
+    final q = query.trim();
+    _latestSearchQuery = q;
+    if (q.length < 2) return const [];
+    // Small debounce — with the per-keystroke optionsBuilder calls Flutter
+    // makes, this collapses bursts into one in-flight request.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    if (q != _latestSearchQuery) return const [];
+    try {
+      final url = Uri.parse(
+        'https://photon.komoot.io/api/'
+        '?q=${Uri.encodeQueryComponent(q)}'
+        '&limit=8&lang=en',
+      );
+      final res = await http.get(url);
+      if (q != _latestSearchQuery) return const [];
+      if (res.statusCode != 200) return const [];
+      final body = jsonDecode(res.body);
+      final features = (body is Map && body['features'] is List)
+          ? body['features'] as List
+          : const [];
+      final results = <_PlaceSuggestion>[];
+      for (final f in features) {
+        if (f is! Map) continue;
+        final geometry = f['geometry'];
+        final properties = f['properties'];
+        if (geometry is! Map || properties is! Map) continue;
+        final coords = geometry['coordinates'];
+        if (coords is! List || coords.length < 2) continue;
+        final lng = (coords[0] as num?)?.toDouble();
+        final lat = (coords[1] as num?)?.toDouble();
+        if (lng == null || lat == null) continue;
+        // Build a friendly display name: "Name, State, Country".
+        final name = (properties['name'] ?? '').toString();
+        if (name.isEmpty) continue;
+        final state = (properties['state'] ?? '').toString();
+        final country = (properties['country'] ?? '').toString();
+        final parts = <String>[name];
+        if (state.isNotEmpty && state != name) parts.add(state);
+        if (country.isNotEmpty) parts.add(country);
+        results.add(_PlaceSuggestion(parts.join(', '), lat, lng));
+      }
+      return results;
+    } catch (_) {
+      return const [];
     }
   }
 
@@ -539,15 +614,107 @@ class _PredictionsScreenState extends State<PredictionsScreen>
             ],
           ),
           const SizedBox(height: 8),
-          // Birth City row — lat/lng are derived via geocoding (`_lookupCity`)
-          // and kept in hidden controllers, so the user only sees the city.
+          // Birth City row — autocomplete pulls suggestions from Photon
+          // (OpenStreetMap) so the user can type "Ho" and pick "Ho Chi Minh
+          // City, Vietnam" from a dropdown. Selecting a suggestion fills the
+          // hidden lat/lng controllers from the response, no second call.
+          // The "Find" button stays as a fallback for arbitrary text input.
           Row(
             children: [
               Expanded(
-                child: _textField(
-                  'Birth City',
-                  _cityController,
-                  errorText: _cityError,
+                child: Autocomplete<_PlaceSuggestion>(
+                  displayStringForOption: (s) => s.displayName,
+                  optionsBuilder: (tev) => _searchPlaces(tev.text),
+                  onSelected: (s) {
+                    setState(() {
+                      _cityController.text = s.displayName;
+                      _latitudeController.text = s.latitude.toStringAsFixed(7);
+                      _longitudeController.text =
+                          s.longitude.toStringAsFixed(7);
+                      _lastGeocodedCity = s.displayName;
+                      _cityError = null;
+                    });
+                    _showCoordinatesAlert(
+                        s.displayName, s.latitude, s.longitude);
+                  },
+                  fieldViewBuilder: (
+                    BuildContext context,
+                    TextEditingController controller,
+                    FocusNode focusNode,
+                    VoidCallback onFieldSubmitted,
+                  ) {
+                    // Sync the autocomplete-owned controller with our own
+                    // controller in both directions so the rest of the form
+                    // (and pre-fill from the saved profile) keeps working.
+                    if (controller.text != _cityController.text) {
+                      controller.text = _cityController.text;
+                    }
+                    controller.addListener(() {
+                      if (_cityController.text != controller.text) {
+                        _cityController.text = controller.text;
+                      }
+                    });
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      onSubmitted: (_) => onFieldSubmitted(),
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 14),
+                      decoration: InputDecoration(
+                        labelText: 'Birth City',
+                        labelStyle: const TextStyle(
+                            color: Colors.white70, fontSize: 12),
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 10),
+                        errorText: _cityError,
+                        errorStyle: const TextStyle(fontSize: 11),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(
+                              color: Colors.white.withValues(alpha: 0.2)),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide:
+                              const BorderSide(color: Color(0xFF7C4DFF)),
+                        ),
+                      ),
+                    );
+                  },
+                  optionsViewBuilder: (context, onSelected, options) {
+                    return Align(
+                      alignment: Alignment.topLeft,
+                      child: Material(
+                        color: const Color(0xFF1A1745),
+                        elevation: 4,
+                        borderRadius: BorderRadius.circular(8),
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 240),
+                          child: ListView.builder(
+                            padding: EdgeInsets.zero,
+                            shrinkWrap: true,
+                            itemCount: options.length,
+                            itemBuilder: (context, i) {
+                              final s = options.elementAt(i);
+                              return InkWell(
+                                onTap: () => onSelected(s),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 10),
+                                  child: Text(
+                                    s.displayName,
+                                    style: const TextStyle(
+                                        color: Colors.white, fontSize: 13),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
               const SizedBox(width: 8),
