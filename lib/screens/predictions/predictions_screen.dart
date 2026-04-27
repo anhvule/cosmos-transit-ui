@@ -59,6 +59,12 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   // result arrived still matches the one the user is on.
   String _latestSearchQuery = '';
 
+  // Visible debug status under the city field so we can see what the
+  // autocomplete is actually doing on-device. Backed by a ValueNotifier so
+  // we can update it from inside the async optionsBuilder without
+  // triggering rebuilds during the build phase.
+  final ValueNotifier<String?> _searchStatus = ValueNotifier<String?>(null);
+
   // External controller + focus node so RawAutocomplete uses our existing
   // _cityController. (The basic Autocomplete widget owns its own controller
   // internally, which makes pre-fill from saved profile awkward to keep
@@ -118,6 +124,7 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     _nameController.dispose();
     _cityController.dispose();
     _cityFocusNode.dispose();
+    _searchStatus.dispose();
     _latitudeController.dispose();
     _longitudeController.dispose();
     _timezoneController.dispose();
@@ -171,7 +178,11 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   Future<Iterable<_PlaceSuggestion>> _searchPlaces(String query) async {
     final q = query.trim();
     _latestSearchQuery = q;
-    if (q.length < 2) return const [];
+    if (q.length < 2) {
+      _searchStatus.value = null;
+      return const [];
+    }
+    _searchStatus.value = 'Searching "$q"…';
     // Small debounce — with the per-keystroke optionsBuilder calls Flutter
     // makes, this collapses bursts into one in-flight request.
     await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -182,9 +193,12 @@ class _PredictionsScreenState extends State<PredictionsScreen>
         '?q=${Uri.encodeQueryComponent(q)}'
         '&limit=8&lang=en',
       );
-      final res = await http.get(url);
+      final res = await http.get(url).timeout(const Duration(seconds: 8));
       if (q != _latestSearchQuery) return const [];
-      if (res.statusCode != 200) return const [];
+      if (res.statusCode != 200) {
+        _searchStatus.value = 'HTTP ${res.statusCode} from Photon';
+        return const [];
+      }
       final body = jsonDecode(res.body);
       final features = (body is Map && body['features'] is List)
           ? body['features'] as List
@@ -233,8 +247,12 @@ class _PredictionsScreenState extends State<PredictionsScreen>
         if (country.isNotEmpty) parts.add(country);
         results.add(_PlaceSuggestion(parts.join(', '), lat, lng));
       }
+      _searchStatus.value = results.isEmpty
+          ? 'No matching cities for "$q"'
+          : '${results.length} suggestion(s) — tap one';
       return results;
-    } catch (_) {
+    } catch (e) {
+      _searchStatus.value = 'Network error: $e';
       return const [];
     }
   }
@@ -766,6 +784,24 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                 ),
               ),
             ],
+          ),
+          // Diagnostic status — temporary, lets us see whether Photon is
+          // being hit and what it returned. Hidden when no search is active.
+          ValueListenableBuilder<String?>(
+            valueListenable: _searchStatus,
+            builder: (context, status, _) {
+              if (status == null) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(top: 4, left: 4),
+                child: Text(
+                  status,
+                  style: TextStyle(
+                    color: Colors.amber.withValues(alpha: 0.85),
+                    fontSize: 10,
+                  ),
+                ),
+              );
+            },
           ),
           const SizedBox(height: 8),
           Row(
