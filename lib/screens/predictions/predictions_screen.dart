@@ -59,6 +59,12 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   // result arrived still matches the one the user is on.
   String _latestSearchQuery = '';
 
+  // External controller + focus node so RawAutocomplete uses our existing
+  // _cityController. (The basic Autocomplete widget owns its own controller
+  // internally, which makes pre-fill from saved profile awkward to keep
+  // in sync.)
+  late final FocusNode _cityFocusNode;
+
   static DateTime _todayDateOnly() {
     final n = DateTime.now();
     return DateTime(n.year, n.month, n.day);
@@ -77,6 +83,7 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     super.initState();
     _tabController =
         TabController(length: PredictionArea.values.length, vsync: this);
+    _cityFocusNode = FocusNode();
     // Pre-fill fields from the saved profile (set during onboarding) so the
     // user doesn't have to re-type their birth details on every launch.
     // Falls back to the hardcoded defaults if onboarding hasn't run.
@@ -110,6 +117,7 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     _tabController.dispose();
     _nameController.dispose();
     _cityController.dispose();
+    _cityFocusNode.dispose();
     _latitudeController.dispose();
     _longitudeController.dispose();
     _timezoneController.dispose();
@@ -181,12 +189,35 @@ class _PredictionsScreenState extends State<PredictionsScreen>
       final features = (body is Map && body['features'] is List)
           ? body['features'] as List
           : const [];
+      // Filter to actual place-type results (city/town/village/county/
+      // state/country). Photon's "office", "amenity", "house", etc. matches
+      // are noisy for a birth-city picker.
+      const placeKeys = {'place', 'boundary'};
+      const placeTypes = {
+        'city',
+        'town',
+        'village',
+        'hamlet',
+        'municipality',
+        'county',
+        'state',
+        'region',
+        'province',
+        'country',
+        'administrative',
+      };
       final results = <_PlaceSuggestion>[];
       for (final f in features) {
         if (f is! Map) continue;
         final geometry = f['geometry'];
         final properties = f['properties'];
         if (geometry is! Map || properties is! Map) continue;
+        final osmKey = (properties['osm_key'] ?? '').toString();
+        final type = (properties['type'] ?? '').toString();
+        // Reject non-place results.
+        if (!placeKeys.contains(osmKey) && !placeTypes.contains(type)) {
+          continue;
+        }
         final coords = geometry['coordinates'];
         if (coords is! List || coords.length < 2) continue;
         final lng = (coords[0] as num?)?.toDouble();
@@ -622,12 +653,13 @@ class _PredictionsScreenState extends State<PredictionsScreen>
           Row(
             children: [
               Expanded(
-                child: Autocomplete<_PlaceSuggestion>(
+                child: RawAutocomplete<_PlaceSuggestion>(
+                  textEditingController: _cityController,
+                  focusNode: _cityFocusNode,
                   displayStringForOption: (s) => s.displayName,
                   optionsBuilder: (tev) => _searchPlaces(tev.text),
                   onSelected: (s) {
                     setState(() {
-                      _cityController.text = s.displayName;
                       _latitudeController.text = s.latitude.toStringAsFixed(7);
                       _longitudeController.text =
                           s.longitude.toStringAsFixed(7);
@@ -643,17 +675,6 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                     FocusNode focusNode,
                     VoidCallback onFieldSubmitted,
                   ) {
-                    // Sync the autocomplete-owned controller with our own
-                    // controller in both directions so the rest of the form
-                    // (and pre-fill from the saved profile) keeps working.
-                    if (controller.text != _cityController.text) {
-                      controller.text = _cityController.text;
-                    }
-                    controller.addListener(() {
-                      if (_cityController.text != controller.text) {
-                        _cityController.text = controller.text;
-                      }
-                    });
                     return TextField(
                       controller: controller,
                       focusNode: focusNode,
