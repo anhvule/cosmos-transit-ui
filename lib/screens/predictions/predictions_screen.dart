@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:intl/intl.dart';
 import '../../models/prediction_reading.dart';
 import '../../services/prediction_api_service.dart';
+import '../../services/storage_service.dart';
 import '../investment_forecast/investment_forecast_screen.dart';
 import '../dasha/dasha_screen.dart';
+import '../essence_cycle/essence_cycle_screen.dart';
 import '../../widgets/cosmic_loader.dart';
 
 class PredictionsScreen extends StatefulWidget {
@@ -21,10 +24,17 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   final _nameController = TextEditingController(text: 'Astrologer');
   DateTime _birthDate = DateTime(1991, 12, 29);
   TimeOfDay _birthTime = const TimeOfDay(hour: 13, minute: 30);
+  final _cityController = TextEditingController();
   final _latitudeController = TextEditingController(text: '10.7765713');
   final _longitudeController = TextEditingController(text: '106.7012093');
   final _timezoneController = TextEditingController(text: 'Asia/Ho_Chi_Minh');
   DateTime _transitDate = _todayDateOnly();
+
+  // City → lat/lng geocoding state. `_lastGeocodedCity` lets us avoid
+  // re-running the lookup on every fetch when the city hasn't changed.
+  bool _geocoding = false;
+  String? _cityError;
+  String _lastGeocodedCity = '';
 
   static DateTime _todayDateOnly() {
     final n = DateTime.now();
@@ -44,6 +54,30 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     super.initState();
     _tabController =
         TabController(length: PredictionArea.values.length, vsync: this);
+    // Pre-fill fields from the saved profile (set during onboarding) so the
+    // user doesn't have to re-type their birth details on every launch.
+    // Falls back to the hardcoded defaults if onboarding hasn't run.
+    final profile = StorageService.getProfile();
+    if (profile != null) {
+      _nameController.text = profile.name;
+      _birthDate = profile.birthDate;
+      // birthTime is stored as "HH:mm" — parse it back into a TimeOfDay.
+      final parts = profile.birthTime.split(':');
+      if (parts.length == 2) {
+        final h = int.tryParse(parts[0]);
+        final m = int.tryParse(parts[1]);
+        if (h != null && m != null) {
+          _birthTime = TimeOfDay(hour: h, minute: m);
+        }
+      }
+      _cityController.text = profile.birthCity;
+      _latitudeController.text = profile.latitude.toStringAsFixed(7);
+      _longitudeController.text = profile.longitude.toStringAsFixed(7);
+      // Treat the profile's city as already geocoded so we don't re-lookup
+      // on first fetch.
+      _lastGeocodedCity = profile.birthCity;
+      // Profile doesn't store timezone yet; keep the existing default.
+    }
     // Auto-fetch once on first load
     WidgetsBinding.instance.addPostFrameCallback((_) => _fetchAll());
   }
@@ -52,10 +86,50 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   void dispose() {
     _tabController.dispose();
     _nameController.dispose();
+    _cityController.dispose();
     _latitudeController.dispose();
     _longitudeController.dispose();
     _timezoneController.dispose();
     super.dispose();
+  }
+
+  /// Geocode the user-entered city to latitude/longitude using the
+  /// `geocoding` package and write the result back into the lat/lng
+  /// controllers. Same approach the onboarding screen uses.
+  Future<void> _lookupCity() async {
+    final city = _cityController.text.trim();
+    if (city.isEmpty) {
+      setState(() => _cityError = 'Enter a city name first.');
+      return;
+    }
+    setState(() {
+      _geocoding = true;
+      _cityError = null;
+    });
+    try {
+      final locations = await locationFromAddress(city);
+      if (!mounted) return;
+      if (locations.isEmpty) {
+        setState(() {
+          _geocoding = false;
+          _cityError = 'City not found. Try a different spelling.';
+        });
+        return;
+      }
+      final loc = locations.first;
+      setState(() {
+        _latitudeController.text = loc.latitude.toStringAsFixed(7);
+        _longitudeController.text = loc.longitude.toStringAsFixed(7);
+        _geocoding = false;
+        _lastGeocodedCity = city;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _geocoding = false;
+        _cityError = 'Lookup failed: ${e.toString()}';
+      });
+    }
   }
 
   String _formatDate(DateTime d) =>
@@ -94,6 +168,16 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     );
   }
 
+  void _openEssenceCycle() {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => EssenceCycleScreen(
+        initialFullName: _nameController.text.trim(),
+        initialDob: _formatDate(_birthDate),
+        initialStartYear: DateTime.now().year,
+      ),
+    ));
+  }
+
   void _openForecast() {
     final req = _buildRequest();
     if (req == null) {
@@ -117,8 +201,16 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   }
 
   Future<void> _fetchAll({bool forceRefresh = false}) async {
+    // If the user typed a new city since the last geocode, derive lat/lng
+    // first so they don't have to remember to tap the Find button.
+    final city = _cityController.text.trim();
+    if (city.isNotEmpty && city != _lastGeocodedCity) {
+      await _lookupCity();
+      if (_cityError != null) return;
+    }
     final req = _buildRequest();
     if (req == null) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill all fields correctly.')),
       );
@@ -311,6 +403,7 @@ class _PredictionsScreenState extends State<PredictionsScreen>
             if (!_formExpanded)
               // Tap = use cache if fresh; long-press = force refresh.
               GestureDetector(
+                behavior: HitTestBehavior.opaque,
                 onTap: () => _fetchAll(),
                 onLongPress: () {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -327,23 +420,49 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                       color: Colors.white70, size: 20),
                 ),
               ),
-            IconButton(
-              icon: const Icon(Icons.auto_awesome,
+            PopupMenuButton<_NavTarget>(
+              tooltip: 'More',
+              icon: const Icon(Icons.more_vert,
                   color: Colors.white70, size: 20),
-              onPressed: _openDasha,
-              tooltip: 'Vimshottari Dasha',
-              constraints:
-                  const BoxConstraints(minWidth: 32, minHeight: 32),
               padding: EdgeInsets.zero,
-            ),
-            IconButton(
-              icon: const Icon(Icons.insights,
-                  color: Colors.white70, size: 20),
-              onPressed: _openForecast,
-              tooltip: 'Investment Forecast',
-              constraints:
-                  const BoxConstraints(minWidth: 32, minHeight: 32),
-              padding: EdgeInsets.zero,
+              color: const Color(0xFF1F1B4F),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+                side: BorderSide(
+                    color: Colors.white.withValues(alpha: 0.12)),
+              ),
+              onSelected: (target) {
+                switch (target) {
+                  case _NavTarget.essenceCycle:
+                    _openEssenceCycle();
+                    break;
+                  case _NavTarget.dasha:
+                    _openDasha();
+                    break;
+                  case _NavTarget.investmentForecast:
+                    _openForecast();
+                    break;
+                }
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: _NavTarget.essenceCycle,
+                  child: _MenuRow(
+                      icon: Icons.timeline, label: 'Essence Cycle'),
+                ),
+                PopupMenuItem(
+                  value: _NavTarget.dasha,
+                  child: _MenuRow(
+                      icon: Icons.auto_awesome,
+                      label: 'Vimshottari Dasha'),
+                ),
+                PopupMenuItem(
+                  value: _NavTarget.investmentForecast,
+                  child: _MenuRow(
+                      icon: Icons.insights,
+                      label: 'Investment Forecast'),
+                ),
+              ],
             ),
             AnimatedRotation(
               turns: _formExpanded ? 0.5 : 0.0,
@@ -370,17 +489,44 @@ class _PredictionsScreenState extends State<PredictionsScreen>
             ],
           ),
           const SizedBox(height: 8),
+          // Birth City row — lat/lng are derived via geocoding (`_lookupCity`)
+          // and kept in hidden controllers, so the user only sees the city.
           Row(
             children: [
               Expanded(
-                  child: _textField('Latitude', _latitudeController,
-                      keyboard: const TextInputType.numberWithOptions(
-                          decimal: true, signed: true))),
+                child: _textField(
+                  'Birth City',
+                  _cityController,
+                  errorText: _cityError,
+                ),
+              ),
               const SizedBox(width: 8),
-              Expanded(
-                  child: _textField('Longitude', _longitudeController,
-                      keyboard: const TextInputType.numberWithOptions(
-                          decimal: true, signed: true))),
+              SizedBox(
+                height: 40,
+                child: ElevatedButton.icon(
+                  onPressed: _geocoding ? null : _lookupCity,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        const Color(0xFF7C4DFF).withValues(alpha: 0.85),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  icon: _geocoding
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.travel_explore, size: 16),
+                  label: const Text('Find',
+                      style: TextStyle(fontSize: 13)),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -459,6 +605,7 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     String label,
     TextEditingController c, {
     TextInputType? keyboard,
+    String? errorText,
   }) {
     return TextField(
       controller: c,
@@ -470,6 +617,8 @@ class _PredictionsScreenState extends State<PredictionsScreen>
         isDense: true,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        errorText: errorText,
+        errorStyle: const TextStyle(fontSize: 11),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
           borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
@@ -742,6 +891,26 @@ class _SectionHeader extends StatelessWidget {
           letterSpacing: 1.2,
         ),
       ),
+    );
+  }
+}
+
+/// Targets for the header-bar overflow menu.
+enum _NavTarget { essenceCycle, dasha, investmentForecast }
+
+class _MenuRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _MenuRow({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: Colors.white70, size: 18),
+        const SizedBox(width: 10),
+        Text(label, style: const TextStyle(color: Colors.white)),
+      ],
     );
   }
 }
