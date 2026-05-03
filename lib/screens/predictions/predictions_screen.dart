@@ -6,12 +6,16 @@ import 'package:geocoding/geocoding.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import '../../models/prediction_reading.dart';
+import '../../models/dasha_reading.dart';
 import '../../services/prediction_api_service.dart';
 import '../../services/storage_service.dart';
 import '../investment_forecast/investment_forecast_screen.dart';
 import '../dasha/dasha_screen.dart';
 import '../essence_cycle/essence_cycle_screen.dart';
 import '../yearly/yearly_screen.dart';
+import '../wealth/wealth_analysis_screen.dart';
+import '../favourites/favourites_screen.dart';
+import '../profiles/profiles_screen.dart';
 import '../../widgets/cosmic_loader.dart';
 
 /// One autocomplete suggestion returned by the Photon (OpenStreetMap) API.
@@ -36,8 +40,13 @@ class PredictionsScreen extends StatefulWidget {
 }
 
 class _PredictionsScreenState extends State<PredictionsScreen>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabController;
+    with TickerProviderStateMixin {
+  // Mutable so we can recreate the controller when the active profile's
+  // topic set changes (different number of tabs).
+  late TabController _tabController;
+  // Tabs/tab views derive from this filtered list — defaults to every
+  // PredictionArea but trimmed when the active profile picks a subset.
+  late List<PredictionArea> _visibleAreas;
 
   // Default inputs per spec
   final _nameController = TextEditingController(text: 'Astrologer');
@@ -46,7 +55,11 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   final _cityController = TextEditingController(text: 'Ho Chi Minh City');
   final _latitudeController = TextEditingController(text: '10.7765713');
   final _longitudeController = TextEditingController(text: '106.7012093');
-  final _timezoneController = TextEditingController(text: 'Asia/Ho_Chi_Minh');
+  // Timezone is a numeric UTC offset in hours (e.g. 7 for Vietnam, -5 for
+  // US Eastern). Backend accepts integers in [-12, 14]; fractional offsets
+  // are not supported yet.
+  final _timezoneController = TextEditingController(text: '7');
+  String? _timezoneError;
   DateTime _transitDate = _todayDateOnly();
 
   // City → lat/lng geocoding state. `_lastGeocodedCity` lets us avoid
@@ -73,10 +86,57 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     return DateTime(n.year, n.month, n.day);
   }
 
+  /// Derive the list of PredictionAreas this screen should render tabs
+  /// for, based on the active profile's topic preferences. An empty
+  /// `topics` list (legacy default) means "show everything".
+  List<PredictionArea> _computeVisibleAreas() {
+    final profile = StorageService.getProfile();
+    final picks = profile?.topics ?? const <String>[];
+    if (picks.isEmpty) return PredictionArea.values;
+    final pickSet = picks.toSet();
+    final filtered = PredictionArea.values
+        .where((a) => pickSet.contains(a.name))
+        .toList();
+    // Defensive: never present zero tabs — fall back to all if a profile
+    // somehow ended up with an empty-but-explicit selection.
+    return filtered.isEmpty ? PredictionArea.values : filtered;
+  }
+
+  /// Recompute visible tabs after the active profile changes and rebuild
+  /// the TabController to match the new length. Discards per-tab state
+  /// for areas that are no longer visible.
+  void _rebuildTabsForActiveProfile() {
+    final next = _computeVisibleAreas();
+    final sameSet = next.length == _visibleAreas.length &&
+        next.every((a) => _visibleAreas.contains(a));
+    if (sameSet) return;
+    _tabController.dispose();
+    setState(() {
+      _visibleAreas = next;
+      // +1 for the trailing "Current Dasha" tab, which is always present.
+      _tabController = TabController(length: next.length + 1, vsync: this);
+      // Drop cached results/errors for areas the user no longer wants —
+      // saves memory and avoids surfacing stale data if they re-enable.
+      final keep = next.toSet();
+      _results.removeWhere((k, _) => !keep.contains(k));
+      _errors.removeWhere((k, _) => !keep.contains(k));
+      _loading.removeWhere((k, _) => !keep.contains(k));
+    });
+  }
+
   // Per-tab state
   final Map<PredictionArea, PredictionReading?> _results = {};
   final Map<PredictionArea, String?> _errors = {};
   final Map<PredictionArea, bool> _loading = {};
+
+  // ── Dasha tab state ────────────────────────────────────────────────────
+  // The "Current Dasha" tab lives alongside the PredictionArea tabs but
+  // pulls from /api/dasha (different shape — not a PredictionReading), so
+  // we keep its loading/result/error state in dedicated fields rather than
+  // trying to wedge it into the PredictionArea-keyed maps.
+  DashaReading? _dashaResult;
+  String? _dashaError;
+  bool _dashaLoading = false;
 
   // Collapsible panel state — default expanded so user sees inputs on first run
   bool _formExpanded = true;
@@ -84,8 +144,10 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   @override
   void initState() {
     super.initState();
+    _visibleAreas = _computeVisibleAreas();
+    // +1 for the trailing "Current Dasha" tab.
     _tabController =
-        TabController(length: PredictionArea.values.length, vsync: this);
+        TabController(length: _visibleAreas.length + 1, vsync: this);
     _cityFocusNode = FocusNode();
     // Pre-fill fields from the saved profile (set during onboarding) so the
     // user doesn't have to re-type their birth details on every launch.
@@ -109,7 +171,9 @@ class _PredictionsScreenState extends State<PredictionsScreen>
       // Treat the profile's city as already geocoded so we don't re-lookup
       // on first fetch.
       _lastGeocodedCity = profile.birthCity;
-      // Profile doesn't store timezone yet; keep the existing default.
+      // Profile carries its own UTC offset — preload it so the user
+      // doesn't have to reset it for every saved chart.
+      _timezoneController.text = profile.timezone.toString();
     }
     // Auto-fetch once on first load
     WidgetsBinding.instance.addPostFrameCallback((_) => _fetchAll());
@@ -312,16 +376,39 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     final lng = double.tryParse(_longitudeController.text.trim());
     if (lat == null || lng == null) return null;
     if (_nameController.text.trim().isEmpty) return null;
-    if (_timezoneController.text.trim().isEmpty) return null;
+    final tz = _parseTimezone(_timezoneController.text);
+    if (tz == null) return null;
     return PredictionRequest(
       name: _nameController.text.trim(),
       birthDate: _formatDate(_birthDate),
       birthTime: _formatTime(_birthTime),
       latitude: lat,
       longitude: lng,
-      timezone: _timezoneController.text.trim(),
+      timezone: tz,
       transitDate: _formatDate(_transitDate),
     );
+  }
+
+  /// Parse the timezone field as a signed integer UTC offset in [-12, 14].
+  /// Strips a leading '+' so "+7" works. Updates `_timezoneError` for the
+  /// form to render; returns null on invalid input.
+  int? _parseTimezone(String raw) {
+    final trimmed = raw.trim().replaceFirst(RegExp(r'^\+'), '');
+    if (trimmed.isEmpty) {
+      _timezoneError = 'Required';
+      return null;
+    }
+    final n = int.tryParse(trimmed);
+    if (n == null) {
+      _timezoneError = 'Whole number only (e.g. 7)';
+      return null;
+    }
+    if (n < -12 || n > 14) {
+      _timezoneError = 'Range -12 to 14';
+      return null;
+    }
+    _timezoneError = null;
+    return n;
   }
 
   void _openDasha() {
@@ -386,6 +473,110 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     ));
   }
 
+  void _openWealth() {
+    final req = _buildRequest();
+    if (req == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill all fields correctly.')),
+      );
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => WealthAnalysisScreen(request: req)),
+    );
+  }
+
+  /// Quick-save the active transit date as a favourite without navigating
+  /// away. Pops a tiny dialog for an optional title + a required memory note,
+  /// POSTs to /api/favourites with the current `_transitDate`, and confirms
+  /// via snackbar. Errors surface inline.
+  Future<void> _saveCurrentDateToFavourites() async {
+    final entered = await showDialog<_QuickFav>(
+      context: context,
+      builder: (_) => _QuickSaveFavouriteDialog(date: _transitDate),
+    );
+    if (!mounted || entered == null) return;
+    try {
+      await PredictionApiService.createFavourite(
+        userKey: StorageService.getDeviceKey(),
+        transitDate: _formatDate(_transitDate),
+        title: entered.title,
+        description: entered.description,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('★ Saved ${_formatDate(_transitDate)} to favourites'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save: $e')),
+      );
+    }
+  }
+
+  /// Open the saved-profiles manager. After it returns, reload the form
+  /// fields from whichever profile is now active so the user sees the
+  /// switch reflected immediately and can fetch predictions for it.
+  void _openProfiles() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ProfilesScreen()),
+    );
+    if (!mounted) return;
+    final profile = StorageService.getProfile();
+    if (profile == null) return;
+    setState(() {
+      _nameController.text = profile.name;
+      _birthDate = profile.birthDate;
+      final parts = profile.birthTime.split(':');
+      if (parts.length == 2) {
+        final h = int.tryParse(parts[0]);
+        final m = int.tryParse(parts[1]);
+        if (h != null && m != null) {
+          _birthTime = TimeOfDay(hour: h, minute: m);
+        }
+      }
+      _cityController.text = profile.birthCity;
+      _latitudeController.text = profile.latitude.toStringAsFixed(7);
+      _longitudeController.text = profile.longitude.toStringAsFixed(7);
+      _lastGeocodedCity = profile.birthCity;
+      _timezoneController.text = profile.timezone.toString();
+      _timezoneError = null;
+    });
+    // Active profile may have a different topic set — recreate the tab
+    // controller / visible areas to match before refetching.
+    _rebuildTabsForActiveProfile();
+    _fetchAll();
+  }
+
+  void _openFavourites() async {
+    // Favourites screen returns the picked transit date (YYYY-MM-DD) when
+    // the user taps a row — null when they just back out. We then load that
+    // date as the active transit date and refetch all 7 prediction tabs.
+    final picked = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const FavouritesScreen()),
+    );
+    if (!mounted || picked == null) return;
+    final parts = picked.split('-');
+    if (parts.length != 3) return;
+    final y = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    final d = int.tryParse(parts[2]);
+    if (y == null || m == null || d == null) return;
+    setState(() {
+      _transitDate = DateTime(y, m, d);
+      // Clear any stale results so the loading indicators show on each tab
+      // while the new date's predictions stream in.
+      _results.clear();
+      _errors.clear();
+      _formExpanded = true; // surface the inputs panel so the user sees the date
+    });
+    await _fetchAll();
+  }
+
   Future<void> _fetchAll({bool forceRefresh = false}) async {
     // If the user typed a new city since the last geocode, derive lat/lng
     // first so they don't have to remember to tap the Find button.
@@ -407,10 +598,14 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     // (workers below process the queue with bounded concurrency).
     setState(() {
       _formExpanded = false;
-      for (final a in PredictionArea.values) {
+      // Only mark the visible tabs as loading — there's no point fetching
+      // areas the active profile has filtered out.
+      for (final a in _visibleAreas) {
         _loading[a] = true;
         _errors[a] = null;
       }
+      _dashaLoading = true;
+      _dashaError = null;
     });
 
     // The free Heroku dyno runs a single Node.js worker that spawns a
@@ -419,8 +614,8 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     // router timeout and all return 503. Cap concurrency so the dyno can
     // finish each request within its router budget.
     const concurrency = 2;
-    final queue =
-        List<PredictionArea>.from(PredictionArea.values);
+    // Only fetch the topics this profile cares about.
+    final queue = List<PredictionArea>.from(_visibleAreas);
     Future<void> worker() async {
       while (queue.isNotEmpty) {
         final area = queue.removeAt(0);
@@ -428,7 +623,32 @@ class _PredictionsScreenState extends State<PredictionsScreen>
             forceRefresh: forceRefresh, markLoading: false);
       }
     }
-    await Future.wait(List.generate(concurrency, (_) => worker()));
+    // Run the area workers and the single dasha fetch in parallel — the
+    // dasha endpoint runs its own kerykeion call so it doesn't compete
+    // for the 2-slot worker pool.
+    await Future.wait([
+      ...List.generate(concurrency, (_) => worker()),
+      _fetchDasha(req, forceRefresh: forceRefresh),
+    ]);
+  }
+
+  Future<void> _fetchDasha(PredictionRequest req,
+      {bool forceRefresh = false}) async {
+    try {
+      final result =
+          await PredictionApiService.fetchDasha(req, forceRefresh: forceRefresh);
+      if (!mounted) return;
+      setState(() {
+        _dashaResult = result;
+        _dashaLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _dashaError = e.toString();
+        _dashaLoading = false;
+      });
+    }
   }
 
   IconData _iconFor(PredictionArea a) {
@@ -504,26 +724,41 @@ class _PredictionsScreenState extends State<PredictionsScreen>
               unselectedLabelColor: Colors.white54,
               labelPadding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-              tabs: PredictionArea.values
-                  .map((a) => Tab(
-                        height: 48,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(_iconFor(a), size: 16),
-                            const SizedBox(width: 6),
-                            Text(a.label),
-                          ],
-                        ),
-                      ))
-                  .toList(),
+              tabs: [
+                ..._visibleAreas.map((a) => Tab(
+                      height: 48,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(_iconFor(a), size: 16),
+                          const SizedBox(width: 6),
+                          Text(a.label),
+                        ],
+                      ),
+                    )),
+                // Trailing "Current Dasha" tab — always shown, lives outside
+                // the topic-filterable PredictionArea set because it has its
+                // own data shape (Vimshottari MD/AD/PD/SD).
+                const Tab(
+                  height: 48,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.auto_awesome, size: 16),
+                      SizedBox(width: 6),
+                      Text('Current Dasha'),
+                    ],
+                  ),
+                ),
+              ],
             ),
             Expanded(
               child: TabBarView(
                 controller: _tabController,
-                children: PredictionArea.values
-                    .map((a) => _buildTab(a))
-                    .toList(),
+                children: [
+                  ..._visibleAreas.map((a) => _buildTab(a)),
+                  _buildDashaTab(),
+                ],
               ),
             ),
           ],
@@ -571,7 +806,7 @@ class _PredictionsScreenState extends State<PredictionsScreen>
             Expanded(
               child: _formExpanded
                   ? const Text(
-                      'Transit Inputs',
+                      'Hello Dear',
                       style: TextStyle(
                           color: Colors.white,
                           fontSize: 16,
@@ -585,6 +820,18 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                           fontSize: 14,
                           fontWeight: FontWeight.w600),
                     ),
+            ),
+            // Quick-save the active transit date to favourites without leaving
+            // the predictions screen — opens a small dialog for title + memory.
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _saveCurrentDateToFavourites,
+              child: const Padding(
+                padding:
+                    EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                child: Icon(Icons.star_border,
+                    color: Colors.white70, size: 22),
+              ),
             ),
             if (!_formExpanded)
               // Tap = use cache if fresh; long-press = force refresh.
@@ -631,6 +878,15 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                   case _NavTarget.varshaphal:
                     _openYearly();
                     break;
+                  case _NavTarget.wealth:
+                    _openWealth();
+                    break;
+                  case _NavTarget.favourites:
+                    _openFavourites();
+                    break;
+                  case _NavTarget.profiles:
+                    _openProfiles();
+                    break;
                 }
               },
               itemBuilder: (_) => const [
@@ -657,6 +913,24 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                       icon: Icons.calendar_today_outlined,
                       label: 'Varshaphal (Yearly)'),
                 ),
+                PopupMenuItem(
+                  value: _NavTarget.wealth,
+                  child: _MenuRow(
+                      icon: Icons.diamond_outlined,
+                      label: 'Wealth Analysis'),
+                ),
+                PopupMenuItem(
+                  value: _NavTarget.favourites,
+                  child: _MenuRow(
+                      icon: Icons.favorite_outline,
+                      label: 'Favourites'),
+                ),
+                PopupMenuItem(
+                  value: _NavTarget.profiles,
+                  child: _MenuRow(
+                      icon: Icons.people_outline,
+                      label: 'Saved Profiles'),
+                ),
               ],
             ),
             AnimatedRotation(
@@ -671,8 +945,11 @@ class _PredictionsScreenState extends State<PredictionsScreen>
   }
 
   Widget _buildFormBody() {
+    // Top padding gives the floating Material labels (Name / UTC offset)
+    // room above the field so they aren't clipped by the header bar
+    // sitting directly above.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -680,7 +957,14 @@ class _PredictionsScreenState extends State<PredictionsScreen>
             children: [
               Expanded(child: _textField('Name', _nameController)),
               const SizedBox(width: 8),
-              Expanded(child: _textField('Timezone', _timezoneController)),
+              Expanded(
+                child: _textField(
+                  'UTC offset (h)',
+                  _timezoneController,
+                  keyboard: const TextInputType.numberWithOptions(signed: true),
+                  errorText: _timezoneError,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -1033,6 +1317,118 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     );
   }
 
+  /// "Current Dasha" tab — renders the active MD/AD/PD/SD plus the
+  /// investment-favorable sub-period highlights. Lighter than the dedicated
+  /// Vimshottari Dasha screen — no nakshatra header, no progress bars on
+  /// individual cards, just the four active periods and a green-flagged
+  /// list of upcoming favorable PDs/SDs.
+  Widget _buildDashaTab() {
+    if (_dashaLoading) {
+      return const Center(
+        child: CosmicLoader(message: 'Reading the cosmos...'),
+      );
+    }
+    if (_dashaError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('🌌', style: TextStyle(fontSize: 48)),
+              const SizedBox(height: 12),
+              Text(_dashaError!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white70)),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () {
+                  final req = _buildRequest();
+                  if (req != null) _fetchDasha(req);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF7C4DFF),
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    final r = _dashaResult;
+    if (r == null) {
+      return const Center(
+        child: Text('Tap "Get Predictions" to load.',
+            style: TextStyle(color: Colors.white70)),
+      );
+    }
+
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    return ListView(
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 24 + bottomInset),
+      children: [
+        Text(
+          'Current Dasha — ${r.date}',
+          style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Nakshatra ${r.nakshatra.name} · Lord ${r.nakshatra.lord}',
+          style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.7), fontSize: 12),
+        ),
+        const SizedBox(height: 16),
+        _DashaTabRow(
+            label: 'Mahadasha', sublabel: 'Major', period: r.mahadasha),
+        _DashaTabRow(
+            label: 'Antardasha', sublabel: 'Sub', period: r.antardasha),
+        _DashaTabRow(
+            label: 'Pratyantardasha',
+            sublabel: 'Sub-sub',
+            period: r.pratyantardasha),
+        if (r.sookshmadasha != null)
+          _DashaTabRow(
+              label: 'Sookshmadasha',
+              sublabel: 'Sub-sub-sub',
+              period: r.sookshmadasha!),
+        if (!r.investmentFavorable.isEmpty) ...[
+          const SizedBox(height: 20),
+          const _SectionHeader('Favorable for Investment'),
+          ..._dashaTabFavorables(
+              'Antardashas', r.investmentFavorable.antardashas),
+          ..._dashaTabFavorables(
+              'Pratyantardashas', r.investmentFavorable.pratyantardashas),
+          ..._dashaTabFavorables(
+              'Sookshmadashas', r.investmentFavorable.sookshmadashas),
+        ],
+      ],
+    );
+  }
+
+  List<Widget> _dashaTabFavorables(
+      String groupLabel, List<DashaPeriodAnnotated> periods) {
+    if (periods.isEmpty) return const [];
+    return [
+      Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 6),
+        child: Text(
+          groupLabel,
+          style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.7),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.6),
+        ),
+      ),
+      ...periods.map((p) => _FavorableTabCard(period: p)),
+    ];
+  }
+
   Widget _buildAspectCard(PredictionAspect a) {
     // Map impact level to visual weight:
     //   * Impactful          → bright orange, thicker/stronger border,
@@ -1190,7 +1586,15 @@ class _SectionHeader extends StatelessWidget {
 }
 
 /// Targets for the header-bar overflow menu.
-enum _NavTarget { essenceCycle, dasha, investmentForecast, varshaphal }
+enum _NavTarget {
+  essenceCycle,
+  dasha,
+  investmentForecast,
+  varshaphal,
+  wealth,
+  favourites,
+  profiles,
+}
 
 class _MenuRow extends StatelessWidget {
   final IconData icon;
@@ -1207,4 +1611,435 @@ class _MenuRow extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Compact row inside the "Current Dasha" tab — one MD/AD/PD/SD level
+/// each. Renders glyph + planet + date range without the heavy progress
+/// chrome the dedicated Dasha screen uses.
+class _DashaTabRow extends StatelessWidget {
+  final String label;
+  final String sublabel;
+  final DashaPeriod period;
+
+  const _DashaTabRow({
+    required this.label,
+    required this.sublabel,
+    required this.period,
+  });
+
+  static const Map<String, String> _glyph = {
+    'Sun': '☉',
+    'Moon': '☽',
+    'Mars': '♂',
+    'Mercury': '☿',
+    'Jupiter': '♃',
+    'Venus': '♀',
+    'Saturn': '♄',
+    'Rahu': '☊',
+    'Ketu': '☋',
+  };
+
+  static const Map<String, Color> _color = {
+    'Sun': Color(0xFFFFB347),
+    'Moon': Color(0xFFB0C4DE),
+    'Mars': Color(0xFFFF6B6B),
+    'Mercury': Color(0xFF7DD3C0),
+    'Jupiter': Color(0xFFFFD700),
+    'Venus': Color(0xFFFFB6C1),
+    'Saturn': Color(0xFF8B7CB6),
+    'Rahu': Color(0xFF6B5B95),
+    'Ketu': Color(0xFFB565A7),
+  };
+
+  String _fmt(DateTime d) => DateFormat('MMM d, yyyy').format(d.toLocal());
+
+  @override
+  Widget build(BuildContext context) {
+    const green = Color(0xFF4CD27E);
+    final color = _color[period.planet] ?? const Color(0xFF7C4DFF);
+    final glyph = _glyph[period.planet] ?? '✦';
+    final fav = period.favorable;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: fav
+            ? green.withValues(alpha: 0.06)
+            : Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+            color: fav ? green.withValues(alpha: 0.55) : color.withValues(alpha: 0.4),
+            width: fav ? 1.4 : 1.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.18),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: color.withValues(alpha: 0.5)),
+                ),
+                alignment: Alignment.center,
+                child:
+                    Text(glyph, style: TextStyle(color: color, fontSize: 18)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          label,
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.65),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.6),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          sublabel,
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.4),
+                              fontSize: 10),
+                        ),
+                        if (fav) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: green.withValues(alpha: 0.25),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: const Text(
+                              'GOOD',
+                              style: TextStyle(
+                                  color: green,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.6),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      period.planet,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      '${_fmt(period.startDate)}  →  ${_fmt(period.endDate)}',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          // Surface the first reason inline so the Current Dasha tab is
+          // self-contained — users don't need to scroll the dedicated
+          // Vimshottari Dasha screen to learn why a period is flagged.
+          if (period.reasons.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.only(left: 48),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 3, right: 6),
+                    child: Icon(Icons.check_circle, color: green, size: 12),
+                  ),
+                  Expanded(
+                    child: Text(
+                      period.reasons.first,
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.82),
+                          fontSize: 11.5,
+                          height: 1.35),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (period.warnings.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.only(left: 48),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 3, right: 6),
+                    child: Icon(Icons.warning_amber_rounded,
+                        color: Colors.amberAccent, size: 12),
+                  ),
+                  Expanded(
+                    child: Text(
+                      period.warnings.first,
+                      style: TextStyle(
+                          color: Colors.amberAccent.withValues(alpha: 0.92),
+                          fontSize: 11.5,
+                          height: 1.35),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Compact favorable-period card for the "Current Dasha" tab — shows the
+/// planet, date range, and a bullet list of why the period was flagged.
+class _FavorableTabCard extends StatelessWidget {
+  final DashaPeriodAnnotated period;
+  const _FavorableTabCard({required this.period});
+
+  String _fmt(DateTime d) => DateFormat('MMM d, yyyy').format(d.toLocal());
+
+  @override
+  Widget build(BuildContext context) {
+    const green = Color(0xFF4CD27E);
+    final active = period.isActive;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: green.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+            color: green.withValues(alpha: active ? 0.7 : 0.35),
+            width: active ? 1.5 : 1.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  period.planet,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold),
+                ),
+              ),
+              if (active)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: green.withValues(alpha: 0.25),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text(
+                    'NOW',
+                    style: TextStyle(
+                        color: green,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '${_fmt(period.startDate)}  →  ${_fmt(period.endDate)}',
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.7), fontSize: 11),
+          ),
+          if (period.reasons.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ...period.reasons.map((r) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(top: 3, right: 6),
+                        child: Icon(Icons.check_circle,
+                            color: green, size: 12),
+                      ),
+                      Expanded(
+                        child: Text(
+                          r,
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.85),
+                              fontSize: 12,
+                              height: 1.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+          ],
+          if (period.warnings.isNotEmpty)
+            ...period.warnings.map((w) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(top: 3, right: 6),
+                        child: Icon(Icons.warning_amber_rounded,
+                            color: Colors.amberAccent, size: 12),
+                      ),
+                      Expanded(
+                        child: Text(
+                          w,
+                          style: TextStyle(
+                              color: Colors.amberAccent.withValues(alpha: 0.95),
+                              fontSize: 12,
+                              height: 1.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+        ],
+      ),
+    );
+  }
+}
+
+/// Lightweight payload returned by the quick-save favourite dialog so the
+/// caller (PredictionsScreen) doesn't need to crack open a Map.
+class _QuickFav {
+  final String? title;
+  final String description;
+  _QuickFav({required this.title, required this.description});
+}
+
+/// Compact "save to favourites" dialog shown when the user taps the star on
+/// the Transit Inputs header. The transit date is fixed (passed in) — only
+/// title (optional) and memory (required) are collected here.
+class _QuickSaveFavouriteDialog extends StatefulWidget {
+  final DateTime date;
+  const _QuickSaveFavouriteDialog({required this.date});
+
+  @override
+  State<_QuickSaveFavouriteDialog> createState() =>
+      _QuickSaveFavouriteDialogState();
+}
+
+class _QuickSaveFavouriteDialogState extends State<_QuickSaveFavouriteDialog> {
+  final _titleController = TextEditingController();
+  final _descriptionController = TextEditingController();
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  String _label(DateTime d) => DateFormat('EEE, MMM d, yyyy').format(d);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1A1745),
+      titleTextStyle: const TextStyle(
+          color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+      title: Text('Save ${_label(widget.date)}'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Title (optional)',
+                style: TextStyle(color: Colors.white70, fontSize: 12)),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _titleController,
+              maxLength: 200,
+              style: const TextStyle(color: Colors.white),
+              decoration: _decoration(hint: 'e.g. Saturn return exact'),
+            ),
+            const SizedBox(height: 6),
+            const Text('Memory',
+                style: TextStyle(color: Colors.white70, fontSize: 12)),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _descriptionController,
+              maxLines: 5,
+              minLines: 3,
+              maxLength: 4000,
+              style: const TextStyle(color: Colors.white),
+              decoration:
+                  _decoration(hint: 'What happened? How did it feel?'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            final desc = _descriptionController.text.trim();
+            if (desc.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Memory cannot be empty')),
+              );
+              return;
+            }
+            Navigator.of(context).pop(_QuickFav(
+              title: _titleController.text.trim().isEmpty
+                  ? null
+                  : _titleController.text.trim(),
+              description: desc,
+            ));
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF7C4DFF),
+            foregroundColor: Colors.white,
+          ),
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+
+  InputDecoration _decoration({required String hint}) => InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
+        filled: true,
+        fillColor: Colors.white.withValues(alpha: 0.05),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        counterStyle: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide:
+              const BorderSide(color: Color(0xFF7C4DFF), width: 1.4),
+        ),
+      );
 }

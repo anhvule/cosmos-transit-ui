@@ -22,17 +22,28 @@ class Nakshatra {
       );
 }
 
+/// One dasha level (MD/AD/PD/SD). The backend now merges the period
+/// definition (planet/start/end/description) with the investment
+/// favorability annotation (favorable/reasons/warnings), so the Vimshottari
+/// Dasha screen can show "you're in a good window right now" inline on the
+/// active card without filtering against a separate list.
 class DashaPeriod {
   final String planet;
   final DateTime startDate;
   final DateTime endDate;
   final String description;
+  final bool favorable;
+  final List<String> reasons;
+  final List<String> warnings;
 
   DashaPeriod({
     required this.planet,
     required this.startDate,
     required this.endDate,
     required this.description,
+    this.favorable = false,
+    this.reasons = const [],
+    this.warnings = const [],
   });
 
   factory DashaPeriod.fromJson(Map<String, dynamic> json) => DashaPeriod(
@@ -40,6 +51,13 @@ class DashaPeriod {
         startDate: DateTime.parse(json['startDate'] as String),
         endDate: DateTime.parse(json['endDate'] as String),
         description: (json['description'] ?? '') as String,
+        favorable: (json['favorable'] ?? false) as bool,
+        reasons: ((json['reasons'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        warnings: ((json['warnings'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
       );
 
   Duration get totalDuration => endDate.difference(startDate);
@@ -58,6 +76,90 @@ class DashaPeriod {
   }
 }
 
+/// Sub-period (AD/PD/SD) flagged as favorable for investment. Same fields
+/// as a `DashaPeriod` but without `description` (the backend doesn't ship
+/// per-sub-period descriptions for the favorable lists).
+class DashaPeriodAnnotated {
+  final String planet;
+  final DateTime startDate;
+  final DateTime endDate;
+  final bool favorable;
+  final List<String> reasons;
+  final List<String> warnings;
+
+  DashaPeriodAnnotated({
+    required this.planet,
+    required this.startDate,
+    required this.endDate,
+    required this.favorable,
+    required this.reasons,
+    required this.warnings,
+  });
+
+  factory DashaPeriodAnnotated.fromJson(Map<String, dynamic> json) =>
+      DashaPeriodAnnotated(
+        planet: (json['planet'] ?? '') as String,
+        startDate: DateTime.parse(json['startDate'] as String),
+        endDate: DateTime.parse(json['endDate'] as String),
+        favorable: (json['favorable'] ?? false) as bool,
+        reasons: ((json['reasons'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        warnings: ((json['warnings'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+      );
+
+  Duration get totalDuration => endDate.difference(startDate);
+
+  /// Whether `now` falls inside this period — used by the UI to highlight
+  /// the row that matches the active dasha lord.
+  bool get isActive {
+    final now = DateTime.now();
+    return !now.isBefore(startDate) && now.isBefore(endDate);
+  }
+}
+
+/// Bundle of investment-favorable AD/PD/SD periods (server-filtered to
+/// `favorable: true`). Used by the Vimshottari Dasha screen's "Best for
+/// investment" highlights section.
+class InvestmentFavorablePeriods {
+  final List<DashaPeriodAnnotated> antardashas;
+  final List<DashaPeriodAnnotated> pratyantardashas;
+  final List<DashaPeriodAnnotated> sookshmadashas;
+
+  InvestmentFavorablePeriods({
+    required this.antardashas,
+    required this.pratyantardashas,
+    required this.sookshmadashas,
+  });
+
+  static List<DashaPeriodAnnotated> _list(dynamic raw) =>
+      ((raw as List?) ?? const [])
+          .map((e) =>
+              DashaPeriodAnnotated.fromJson(e as Map<String, dynamic>))
+          .toList();
+
+  factory InvestmentFavorablePeriods.fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return InvestmentFavorablePeriods(
+          antardashas: const [],
+          pratyantardashas: const [],
+          sookshmadashas: const []);
+    }
+    return InvestmentFavorablePeriods(
+      antardashas: _list(json['antardashas']),
+      pratyantardashas: _list(json['pratyantardashas']),
+      sookshmadashas: _list(json['sookshmadashas']),
+    );
+  }
+
+  bool get isEmpty =>
+      antardashas.isEmpty &&
+      pratyantardashas.isEmpty &&
+      sookshmadashas.isEmpty;
+}
+
 class DashaReading {
   final String date;
   final double moonLongitude;
@@ -65,6 +167,8 @@ class DashaReading {
   final DashaPeriod mahadasha;
   final DashaPeriod antardasha;
   final DashaPeriod pratyantardasha;
+  final DashaPeriod? sookshmadasha;
+  final InvestmentFavorablePeriods investmentFavorable;
 
   DashaReading({
     required this.date,
@@ -73,6 +177,8 @@ class DashaReading {
     required this.mahadasha,
     required this.antardasha,
     required this.pratyantardasha,
+    required this.sookshmadasha,
+    required this.investmentFavorable,
   });
 
   factory DashaReading.fromJson(Map<String, dynamic> json) => DashaReading(
@@ -87,5 +193,12 @@ class DashaReading {
             DashaPeriod.fromJson(json['antardasha'] as Map<String, dynamic>),
         pratyantardasha: DashaPeriod.fromJson(
             json['pratyantardasha'] as Map<String, dynamic>),
+        sookshmadasha: json['sookshmadasha'] is Map
+            ? DashaPeriod.fromJson(
+                json['sookshmadasha'] as Map<String, dynamic>)
+            : null,
+        investmentFavorable: InvestmentFavorablePeriods.fromJson(
+          json['investmentFavorable'] as Map<String, dynamic>?,
+        ),
       );
 }
