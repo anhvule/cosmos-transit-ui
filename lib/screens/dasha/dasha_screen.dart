@@ -105,14 +105,17 @@ class _DashaScreenState extends State<DashaScreen> {
   };
 
   // ── Yearly Caution Forecast state ─────────────────────────────────
-  // Polls /api/caution-dates with a year input and renders the union
-  // of CAUTION pratyantardashas across Druckenmiller / Ackman / Soros
-  // profiles. Defaults to the current year; user can step back/forward.
+  // Polls /api/caution-dates with a year + level input and renders the
+  // union of CAUTION periods across Druckenmiller / Ackman / Soros
+  // profiles. Defaults to the current year + pratyantardasha level
+  // (~50-100 day windows); switching to sookshmadasha gives ~5-10 day
+  // windows but ~10x more rows.
   bool _cautionExpanded = false;
   bool _cautionLoading = false;
   String? _cautionError;
   CautionForecast? _cautionForecast;
   late int _cautionYear;
+  String _cautionLevel = 'pratyantardasha';
 
   // Planet → glyph (Vedic / Western mix)
   static const Map<String, String> _planetGlyph = {
@@ -163,6 +166,7 @@ class _DashaScreenState extends State<DashaScreen> {
     try {
       final result = await PredictionApiService.fetchCautionDates(
         year: _cautionYear,
+        level: _cautionLevel,
         forceRefresh: forceRefresh,
       );
       if (!mounted) return;
@@ -634,11 +638,30 @@ class _DashaScreenState extends State<DashaScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
+          // Level toggle: PD (default) ~50-100 day windows; SD ~5-10
+          // day windows but ~10x more rows. Cached per (year, level).
+          Row(
+            children: [
+              Text(
+                'Granularity:',
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.6),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5),
+              ),
+              const SizedBox(width: 8),
+              _cautionLevelChip('pratyantardasha', 'Pratyantardasha'),
+              const SizedBox(width: 6),
+              _cautionLevelChip('sookshmadasha', 'Sookshmadasha'),
+            ],
+          ),
+          const SizedBox(height: 6),
           Text(
-            'Pratyantardasha-level CAUTION windows (~50-100 days each) where '
-            'one of the contrarian charts hits warnings-only. '
-            'Overlapping windows from multiple profiles = stronger signal.',
+            _cautionLevel == 'sookshmadasha'
+                ? 'Sookshmadasha-level CAUTION windows (~5-10 days each). More granular signal — clusters of overlapping rows from multiple profiles are the strongest hits.'
+                : 'Pratyantardasha-level CAUTION windows (~50-100 days each) where one of the contrarian charts hits warnings-only. Overlapping windows from multiple profiles = stronger signal.',
             style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.62),
                 fontSize: 11,
@@ -695,6 +718,38 @@ class _DashaScreenState extends State<DashaScreen> {
           ],
         ],
       ),
+    );
+  }
+
+  Widget _cautionLevelChip(String key, String label) {
+    final selected = _cautionLevel == key;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: _cautionLoading
+          ? null
+          : (_) {
+              if (key == _cautionLevel) return;
+              setState(() {
+                _cautionLevel = key;
+                _cautionForecast = null;
+                _cautionError = null;
+              });
+              _loadCautionForecast();
+            },
+      backgroundColor: Colors.white.withValues(alpha: 0.06),
+      selectedColor: Colors.amberAccent.withValues(alpha: 0.3),
+      labelStyle: TextStyle(
+          color: selected ? Colors.amberAccent : Colors.white70,
+          fontSize: 11,
+          fontWeight: selected ? FontWeight.w700 : FontWeight.w500),
+      visualDensity: VisualDensity.compact,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(
+              color: selected
+                  ? Colors.amberAccent.withValues(alpha: 0.6)
+                  : Colors.white.withValues(alpha: 0.15))),
     );
   }
 

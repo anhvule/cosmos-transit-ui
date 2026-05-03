@@ -256,17 +256,20 @@ class PredictionApiService {
     }
   }
 
-  /// Fetch the year's CAUTION pratyantardasha windows across the three
-  /// bundled celebrity profiles (Druckenmiller / Ackman / Soros). Used
-  /// by the "Yearly Caution Forecast" section on the Vimshottari Dasha
-  /// screen to highlight ~50-100-day windows where contrarian charts
-  /// agree the period needs risk-down posture.
+  /// Fetch the year's CAUTION dasha windows across the three bundled
+  /// celebrity profiles (Druckenmiller / Ackman / Soros). Used by the
+  /// "Yearly Caution Forecast" section on the Vimshottari Dasha screen.
+  ///
+  /// `level` controls granularity:
+  ///   - 'pratyantardasha' (default): ~50-100 day windows
+  ///   - 'sookshmadasha': ~5-10 day windows (~10x more entries)
   static Future<CautionForecast> fetchCautionDates({
     required int year,
+    String level = 'pratyantardasha',
     bool forceRefresh = false,
   }) async {
     const endpoint = 'caution-dates';
-    final body = {'year': year};
+    final body = {'year': year, 'level': level};
 
     if (!forceRefresh) {
       final cached = ApiCacheService.read(endpoint, body);
