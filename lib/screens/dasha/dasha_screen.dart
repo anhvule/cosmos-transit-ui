@@ -33,16 +33,30 @@ class DashaProfileOption {
   });
 }
 
-const _burryProfile = DashaProfileOption(
-  label: 'Michael Burry (1971-06-19, San Jose)',
-  shortLabel: 'Burry',
+const _druckenmillerProfile = DashaProfileOption(
+  label: 'Stanley Druckenmiller (1953-06-14, Pittsburgh)',
+  shortLabel: 'Druckenmiller',
   request: PredictionRequest(
-    name: 'Michael Burry',
-    birthDate: '1971-06-19',
+    name: 'Stanley Druckenmiller',
+    birthDate: '1953-06-14',
     birthTime: '12:00',
-    latitude: 37.3382,
-    longitude: -121.8863,
-    timezone: -7, // PDT in June
+    latitude: 40.4406,
+    longitude: -79.9959,
+    timezone: -4, // EDT in June
+    transitDate: '',
+  ),
+);
+
+const _sorosProfile = DashaProfileOption(
+  label: 'George Soros (1930-08-12, Budapest)',
+  shortLabel: 'Soros',
+  request: PredictionRequest(
+    name: 'George Soros',
+    birthDate: '1930-08-12',
+    birthTime: '12:00',
+    latitude: 47.4979,
+    longitude: 19.0402,
+    timezone: 1, // CET (Budapest didn't observe DST in 1930)
     transitDate: '',
   ),
 );
@@ -135,10 +149,14 @@ class _DashaScreenState extends State<DashaScreen> {
     if (key == _activeProfileKey) return;
     PredictionRequest req;
     switch (key) {
-      case 'burry':
+      case 'druckenmiller':
         // Use the user's transit date so we compare apples-to-apples
         // (the celebrity's chart, but the user's "as-of" moment).
-        req = _withTransitDate(_burryProfile.request, widget.request.transitDate);
+        req = _withTransitDate(
+            _druckenmillerProfile.request, widget.request.transitDate);
+        break;
+      case 'soros':
+        req = _withTransitDate(_sorosProfile.request, widget.request.transitDate);
         break;
       case 'ackman':
         req = _withTransitDate(_ackmanProfile.request, widget.request.transitDate);
@@ -443,10 +461,13 @@ class _DashaScreenState extends State<DashaScreen> {
   String _glyphFor(String planet) => _planetGlyph[planet] ?? '✦';
 
   /// Profile selector at the top of the screen — chips for the user's
-  /// own chart and the bundled celebrity profiles. Tapping a chip
-  /// reloads the screen with that chart's dasha view. Useful for
-  /// comparing how the favorability landscape looks across different
-  /// natal charts (e.g. Burry's hyper-favored late-2000s vs Jack's).
+  /// own chart and the three bundled celebrity profiles
+  /// (Druckenmiller, Soros, Ackman). These three were chosen because
+  /// each beat the always-bullish baseline in the AMZN/SPX backtest:
+  ///   • Druckenmiller +15% (best total accuracy, 50% bear-detection)
+  ///   • Soros        +24% (88% bear-detection — natural contrarian)
+  ///   • Ackman       +6%  (50% bear-detection)
+  /// Tapping a chip reloads the screen with that chart's dasha view.
   Widget _buildProfileSelector() {
     final selfLabel = widget.request.name.isEmpty
         ? 'Your chart'
@@ -483,8 +504,10 @@ class _DashaScreenState extends State<DashaScreen> {
             runSpacing: 6,
             children: [
               _profileChip('self', selfLabel),
-              _profileChip('burry', _burryProfile.shortLabel,
-                  tooltip: _burryProfile.label),
+              _profileChip('druckenmiller', _druckenmillerProfile.shortLabel,
+                  tooltip: _druckenmillerProfile.label),
+              _profileChip('soros', _sorosProfile.shortLabel,
+                  tooltip: _sorosProfile.label),
               _profileChip('ackman', _ackmanProfile.shortLabel,
                   tooltip: _ackmanProfile.label),
             ],
