@@ -168,6 +168,14 @@ class DashaReading {
   final DashaPeriod antardasha;
   final DashaPeriod pratyantardasha;
   final DashaPeriod? sookshmadasha;
+  // Full sub-period lists with favorable/reasons/warnings tags on EACH
+  // entry. The UI renders these as color-coded rows (green = favorable,
+  // amber = warning) so users see both good and cautious windows side
+  // by side. `investmentFavorable.*` is the pre-filtered "green only"
+  // subset for headline highlight sections.
+  final List<DashaPeriodAnnotated> antardashas;
+  final List<DashaPeriodAnnotated> pratyantardashas;
+  final List<DashaPeriodAnnotated> sookshmadashas;
   final InvestmentFavorablePeriods investmentFavorable;
 
   DashaReading({
@@ -178,8 +186,17 @@ class DashaReading {
     required this.antardasha,
     required this.pratyantardasha,
     required this.sookshmadasha,
+    required this.antardashas,
+    required this.pratyantardashas,
+    required this.sookshmadashas,
     required this.investmentFavorable,
   });
+
+  static List<DashaPeriodAnnotated> _annotatedList(dynamic raw) =>
+      ((raw as List?) ?? const [])
+          .map((e) =>
+              DashaPeriodAnnotated.fromJson(e as Map<String, dynamic>))
+          .toList();
 
   factory DashaReading.fromJson(Map<String, dynamic> json) => DashaReading(
         date: (json['date'] ?? '') as String,
@@ -197,6 +214,9 @@ class DashaReading {
             ? DashaPeriod.fromJson(
                 json['sookshmadasha'] as Map<String, dynamic>)
             : null,
+        antardashas: _annotatedList(json['antardashas']),
+        pratyantardashas: _annotatedList(json['pratyantardashas']),
+        sookshmadashas: _annotatedList(json['sookshmadashas']),
         investmentFavorable: InvestmentFavorablePeriods.fromJson(
           json['investmentFavorable'] as Map<String, dynamic>?,
         ),

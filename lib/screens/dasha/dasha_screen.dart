@@ -186,53 +186,63 @@ class _DashaScreenState extends State<DashaScreen> {
             glyph: _glyphFor(sd.planet),
           ),
         ],
-        // ── Investment-favorable sub-period highlights ──
-        // Server flags each AD/PD/SD against the SuddenGainSigns ruleset
-        // (5L/8L/11L lordship, wealth-house placement, speculation planets).
-        // We render them as collapsible sections so users can scan the full
-        // landscape of upcoming favorable windows at a glance.
-        ..._buildFavorableSection(
-          title: 'Favorable Antardashas',
+        // ── Speculative-investment sub-period landscape ──
+        // Every AD/PD/SD is shown with its tag — green when favorable,
+        // amber when only warnings fire, neutral when neither — so users
+        // can scan the full speculation landscape at a glance.
+        ..._buildTaggedSection(
+          title: 'Antardashas',
           sublabel: 'Within current Mahadasha',
-          periods: r.investmentFavorable.antardashas,
+          periods: r.antardashas,
         ),
-        ..._buildFavorableSection(
-          title: 'Favorable Pratyantardashas',
+        ..._buildTaggedSection(
+          title: 'Pratyantardashas',
           sublabel: 'Within current Antardasha',
-          periods: r.investmentFavorable.pratyantardashas,
+          periods: r.pratyantardashas,
         ),
-        ..._buildFavorableSection(
-          title: 'Favorable Sookshmadashas',
+        ..._buildTaggedSection(
+          title: 'Sookshmadashas',
           sublabel: 'Within current Pratyantardasha',
-          periods: r.investmentFavorable.sookshmadashas,
+          periods: r.sookshmadashas,
         ),
       ],
     );
   }
 
-  /// Render a header + list of favorable periods. Returns an empty list if
-  /// there are none — callers spread it into a ListView's children.
-  List<Widget> _buildFavorableSection({
+  /// Render a header + the full list of sub-periods, each colored by its
+  /// favorable/warnings tag. Returns an empty list if there are no periods
+  /// (caller spreads into a ListView's children).
+  List<Widget> _buildTaggedSection({
     required String title,
     required String sublabel,
     required List<DashaPeriodAnnotated> periods,
   }) {
     if (periods.isEmpty) return const [];
+    final favCount = periods.where((p) => p.favorable).length;
+    final warnCount =
+        periods.where((p) => !p.favorable && p.warnings.isNotEmpty).length;
     return [
       const SizedBox(height: 20),
-      _SectionHeader(label: title, sublabel: sublabel, accent: _favorableGreen),
+      _SectionHeader(label: title, sublabel: sublabel),
       const SizedBox(height: 4),
       Padding(
         padding: const EdgeInsets.only(bottom: 8, left: 2, right: 2),
-        child: Text(
-          'Speculative-investment windows per SuddenGainSigns + Dasha.docx rules.',
-          style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.6),
-              fontSize: 11,
-              fontStyle: FontStyle.italic),
+        child: Row(
+          children: [
+            _CountChip(
+                label: '$favCount favorable',
+                color: _favorableGreen,
+                icon: Icons.check_circle),
+            const SizedBox(width: 6),
+            if (warnCount > 0)
+              _CountChip(
+                  label: '$warnCount caution',
+                  color: Colors.amberAccent,
+                  icon: Icons.warning_amber_rounded),
+          ],
         ),
       ),
-      ...periods.map((p) => _FavorablePeriodCard(
+      ...periods.map((p) => _TaggedPeriodCard(
             period: p,
             color: _colorFor(p.planet),
             glyph: _glyphFor(p.planet),
@@ -327,11 +337,9 @@ const Color _favorableGreen = Color(0xFF4CD27E);
 class _SectionHeader extends StatelessWidget {
   final String label;
   final String sublabel;
-  final Color? accent;
   const _SectionHeader({
     required this.label,
     required this.sublabel,
-    this.accent,
   });
 
   @override
@@ -340,21 +348,10 @@ class _SectionHeader extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 8, left: 2),
       child: Row(
         children: [
-          if (accent != null) ...[
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: accent,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 8),
-          ],
           Text(
             label,
-            style: TextStyle(
-              color: accent ?? Colors.white,
+            style: const TextStyle(
+              color: Colors.white,
               fontSize: 14,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.5,
@@ -612,14 +609,82 @@ class _DashaCard extends StatelessWidget {
   }
 }
 
-/// Card for an investment-favorable AD/PD/SD: glyph + planet name + date
-/// range + green "favorable" badge + bulleted reasons + amber warnings.
-class _FavorablePeriodCard extends StatelessWidget {
+/// Tiny inline status badge (FAVORABLE / CAUTION / NOW) used on the
+/// tagged-period cards. Color is supplied by the caller so the same pill
+/// renders green / amber / planet-tinted depending on context.
+class _StatusPill extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _StatusPill({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.25),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+              color: color,
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.8),
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact count chip used in section headers ("3 favorable | 1 caution").
+class _CountChip extends StatelessWidget {
+  final String label;
+  final Color color;
+  final IconData icon;
+  const _CountChip(
+      {required this.label, required this.color, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.45)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 11),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+                color: color, fontSize: 10.5, fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Card for any AD/PD/SD with its tag visible. Three visual states:
+///   • favorable        → green border + tinted bg + FAVORABLE badge,
+///                        all reasons + warnings rendered
+///   • warning-only     → amber border + tinted bg + CAUTION badge, only
+///                        warnings rendered
+///   • neutral          → faint planet-color border, no badge, no extras
+class _TaggedPeriodCard extends StatelessWidget {
   final DashaPeriodAnnotated period;
   final Color color;
   final String glyph;
 
-  const _FavorablePeriodCard({
+  const _TaggedPeriodCard({
     required this.period,
     required this.color,
     required this.glyph,
@@ -650,16 +715,32 @@ class _FavorablePeriodCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final activeBadge = period.isActive;
+    final isActive = period.isActive;
+    final favorable = period.favorable;
+    final hasOnlyWarnings = !favorable && period.warnings.isNotEmpty;
+    final tagColor = favorable
+        ? _favorableGreen
+        : hasOnlyWarnings
+            ? Colors.amberAccent
+            : color;
+    final cardBg = favorable
+        ? _favorableGreen.withValues(alpha: 0.06)
+        : hasOnlyWarnings
+            ? Colors.amberAccent.withValues(alpha: 0.05)
+            : Colors.white.withValues(alpha: 0.03);
+    final borderAlpha = favorable || hasOnlyWarnings
+        ? (isActive ? 0.7 : 0.4)
+        : (isActive ? 0.5 : 0.18);
+    final borderWidth = isActive ? 1.6 : 1.0;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: _favorableGreen.withValues(alpha: 0.06),
+        color: cardBg,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-            color: _favorableGreen.withValues(alpha: activeBadge ? 0.7 : 0.4),
-            width: activeBadge ? 1.6 : 1.0),
+            color: tagColor.withValues(alpha: borderAlpha),
+            width: borderWidth),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -693,23 +774,17 @@ class _FavorablePeriodCard extends StatelessWidget {
                               fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(width: 8),
-                        if (activeBadge)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: _favorableGreen.withValues(alpha: 0.25),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text(
-                              'NOW',
-                              style: TextStyle(
-                                  color: _favorableGreen,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.8),
-                            ),
-                          ),
+                        if (favorable)
+                          _StatusPill(
+                              label: 'FAVORABLE', color: _favorableGreen),
+                        if (hasOnlyWarnings)
+                          _StatusPill(
+                              label: 'CAUTION', color: Colors.amberAccent),
+                        if (isActive) ...[
+                          const SizedBox(width: 6),
+                          _StatusPill(
+                              label: 'NOW', color: tagColor),
+                        ],
                       ],
                     ),
                     const SizedBox(height: 2),
@@ -726,13 +801,13 @@ class _FavorablePeriodCard extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(
                     horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: _favorableGreen.withValues(alpha: 0.2),
+                  color: tagColor.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   _humanDuration(period.totalDuration),
-                  style: const TextStyle(
-                      color: _favorableGreen,
+                  style: TextStyle(
+                      color: tagColor,
                       fontSize: 11,
                       fontWeight: FontWeight.w700),
                 ),
