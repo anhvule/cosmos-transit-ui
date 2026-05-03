@@ -18,6 +18,25 @@ class _DashaScreenState extends State<DashaScreen> {
   String? _error;
   bool _loading = false;
 
+  // ── Range-search state ────────────────────────────────────────────
+  // The "Search dashas in date range" panel expands inline. From defaults
+  // to today; To defaults to today + 1 year. _level limits results to a
+  // single dasha level (mahadasha / antardasha / pratyantardasha /
+  // sookshmadasha) so users aren't drowned in 100+ SDs by default.
+  bool _searchExpanded = false;
+  bool _searchLoading = false;
+  String? _searchError;
+  DashaRange? _searchResult;
+  late DateTime _searchFrom;
+  late DateTime _searchTo;
+  String _searchLevel = 'pratyantardasha';
+  static const _searchLevels = <String, String>{
+    'mahadasha': 'Mahadasha',
+    'antardasha': 'Antardasha',
+    'pratyantardasha': 'Pratyantardasha',
+    'sookshmadasha': 'Sookshmadasha',
+  };
+
   // Planet → glyph (Vedic / Western mix)
   static const Map<String, String> _planetGlyph = {
     'Sun': '☉',
@@ -47,7 +66,69 @@ class _DashaScreenState extends State<DashaScreen> {
   @override
   void initState() {
     super.initState();
+    final today = DateTime.now();
+    _searchFrom = DateTime(today.year, today.month, today.day);
+    _searchTo = _searchFrom.add(const Duration(days: 365));
     WidgetsBinding.instance.addPostFrameCallback((_) => _fetch());
+  }
+
+  String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  Future<void> _runSearch({bool forceRefresh = false}) async {
+    if (!_searchFrom.isBefore(_searchTo)) {
+      setState(() => _searchError = 'From date must be before To date.');
+      return;
+    }
+    setState(() {
+      _searchLoading = true;
+      _searchError = null;
+    });
+    try {
+      final r = await PredictionApiService.fetchDashaRange(
+        name: widget.request.name,
+        birthDate: widget.request.birthDate,
+        birthTime: widget.request.birthTime,
+        latitude: widget.request.latitude,
+        longitude: widget.request.longitude,
+        timezone: widget.request.timezone,
+        fromDate: _ymd(_searchFrom),
+        toDate: _ymd(_searchTo),
+        forceRefresh: forceRefresh,
+      );
+      if (!mounted) return;
+      setState(() {
+        _searchResult = r;
+        _searchLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _searchError = e.toString();
+        _searchLoading = false;
+      });
+    }
+  }
+
+  Future<void> _pickSearchDate({required bool isFrom}) async {
+    final initial = isFrom ? _searchFrom : _searchTo;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(1900),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null) return;
+    setState(() {
+      if (isFrom) {
+        _searchFrom = picked;
+        if (!_searchFrom.isBefore(_searchTo)) {
+          _searchTo = _searchFrom.add(const Duration(days: 1));
+        }
+      } else {
+        _searchTo = picked;
+      }
+    });
   }
 
   Future<void> _fetch({bool forceRefresh = false}) async {
@@ -155,6 +236,9 @@ class _DashaScreenState extends State<DashaScreen> {
       padding: EdgeInsets.fromLTRB(16, 16, 16, 24 + bottomInset),
       children: [
         _buildHeader(r),
+        const SizedBox(height: 16),
+        _buildSearchPanel(),
+        if (_searchResult != null) ..._buildSearchResults(_searchResult!),
         const SizedBox(height: 20),
         _SectionHeader(label: 'Mahadasha', sublabel: 'Major period'),
         _DashaCard(
@@ -254,6 +338,251 @@ class _DashaScreenState extends State<DashaScreen> {
       _planetColor[planet] ?? const Color(0xFF7C4DFF);
 
   String _glyphFor(String planet) => _planetGlyph[planet] ?? '✦';
+
+  /// Collapsible "Search dashas in date range" panel. Header shows the
+  /// active range + level; tapping the header expands the controls
+  /// (from / to date pickers, level selector, Search button).
+  Widget _buildSearchPanel() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: () =>
+                setState(() => _searchExpanded = !_searchExpanded),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  const Icon(Icons.search,
+                      color: Colors.white70, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _searchExpanded
+                        ? const Text(
+                            'Search Dashas in Date Range',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700),
+                          )
+                        : Text(
+                            'Search ${_searchLevels[_searchLevel]}: ${_ymd(_searchFrom)} → ${_ymd(_searchTo)}',
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.85),
+                                fontSize: 13),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                  ),
+                  AnimatedRotation(
+                    turns: _searchExpanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: const Icon(Icons.expand_more,
+                        color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedCrossFade(
+            firstChild: _buildSearchControls(),
+            secondChild: const SizedBox(width: double.infinity, height: 0),
+            crossFadeState: _searchExpanded
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            duration: const Duration(milliseconds: 220),
+            sizeCurve: Curves.easeInOut,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchControls() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _searchDateTile(
+                    label: 'From',
+                    value: _ymd(_searchFrom),
+                    onTap: () => _pickSearchDate(isFrom: true)),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _searchDateTile(
+                    label: 'To',
+                    value: _ymd(_searchTo),
+                    onTap: () => _pickSearchDate(isFrom: false)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          // Level selector — search per-level keeps response sizes
+          // sane (a 5-year range can be ~500 SDs).
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: _searchLevels.entries.map((e) {
+              final selected = e.key == _searchLevel;
+              return ChoiceChip(
+                label: Text(e.value),
+                selected: selected,
+                onSelected: (_) =>
+                    setState(() => _searchLevel = e.key),
+                backgroundColor: Colors.white.withValues(alpha: 0.06),
+                selectedColor:
+                    const Color(0xFF7C4DFF).withValues(alpha: 0.4),
+                labelStyle: TextStyle(
+                    color: selected ? Colors.white : Colors.white70,
+                    fontSize: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(
+                        color: selected
+                            ? const Color(0xFF7C4DFF)
+                            : Colors.white.withValues(alpha: 0.12))),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 12),
+          if (_searchError != null) ...[
+            Text(_searchError!,
+                style: const TextStyle(
+                    color: Colors.redAccent, fontSize: 12)),
+            const SizedBox(height: 8),
+          ],
+          SizedBox(
+            height: 40,
+            child: ElevatedButton.icon(
+              onPressed: _searchLoading ? null : () => _runSearch(),
+              icon: _searchLoading
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.search, size: 16),
+              label: Text(_searchLoading ? 'Searching…' : 'Search'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF7C4DFF),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _searchDateTile({
+    required String label,
+    required String value,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border:
+              Border.all(color: Colors.white.withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label,
+                style: const TextStyle(
+                    color: Colors.white70, fontSize: 11)),
+            const SizedBox(height: 2),
+            Text(value,
+                style:
+                    const TextStyle(color: Colors.white, fontSize: 13)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Render the results section based on the selected level. Each row is
+  /// a `_RangeEntryCard` (similar to `_TaggedPeriodCard` but compact and
+  /// shows the parent lineage for sub-periods).
+  List<Widget> _buildSearchResults(DashaRange r) {
+    final List<DashaRangeEntry> entries = switch (_searchLevel) {
+      'mahadasha' => r.mahadashas,
+      'antardasha' => r.antardashas,
+      'pratyantardasha' => r.pratyantardashas,
+      'sookshmadasha' => r.sookshmadashas,
+      _ => const [],
+    };
+    final levelLabel = _searchLevels[_searchLevel] ?? '';
+    final favCount = entries.where((e) => e.favorable).length;
+    final warnCount = entries
+        .where((e) => !e.favorable && e.warnings.isNotEmpty)
+        .length;
+    return [
+      const SizedBox(height: 14),
+      _SectionHeader(
+        label: 'Search Results',
+        sublabel: '$levelLabel · ${r.fromDate} → ${r.toDate}',
+      ),
+      if (entries.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Text(
+            'No $levelLabel periods in this range.',
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.6),
+                fontSize: 12,
+                fontStyle: FontStyle.italic),
+          ),
+        )
+      else ...[
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            children: [
+              _CountChip(
+                  label: '${entries.length} total',
+                  color: const Color(0xFF7C4DFF),
+                  icon: Icons.list_alt),
+              const SizedBox(width: 6),
+              _CountChip(
+                  label: '$favCount favorable',
+                  color: _favorableGreen,
+                  icon: Icons.check_circle),
+              if (warnCount > 0) ...[
+                const SizedBox(width: 6),
+                _CountChip(
+                    label: '$warnCount caution',
+                    color: Colors.amberAccent,
+                    icon: Icons.warning_amber_rounded),
+              ],
+            ],
+          ),
+        ),
+        ...entries.map((e) => _RangeEntryCard(
+              entry: e,
+              color: _colorFor(e.planet),
+              glyph: _glyphFor(e.planet),
+            )),
+      ],
+    ];
+  }
 
   Widget _buildHeader(DashaReading r) {
     final n = r.nakshatra;
@@ -857,6 +1186,201 @@ class _TaggedPeriodCard extends StatelessWidget {
                           style: TextStyle(
                               color: Colors.amberAccent.withValues(alpha: 0.95),
                               fontSize: 12.5,
+                              height: 1.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One row in the dasha-range search results. Compact layout: planet
+/// glyph + name + date range + status pill. Reasons / warnings are
+/// rendered when present so users can scan why a window is flagged.
+/// `parent` is shown next to the planet name as "Saturn AD → Mercury PD"
+/// breadcrumb so users see the lineage at a glance.
+class _RangeEntryCard extends StatelessWidget {
+  final DashaRangeEntry entry;
+  final Color color;
+  final String glyph;
+
+  const _RangeEntryCard({
+    required this.entry,
+    required this.color,
+    required this.glyph,
+  });
+
+  String _fmtDate(DateTime d) =>
+      DateFormat('MMM d, yyyy').format(d.toLocal());
+
+  String _humanDuration(Duration d) {
+    final days = d.inDays;
+    if (days >= 365) {
+      final years = days / 365.25;
+      final whole = years.floor();
+      final months = ((years - whole) * 12).round();
+      if (months == 0) return '$whole yr';
+      return '$whole yr $months mo';
+    }
+    if (days >= 30) {
+      final months = (days / 30.4375).floor();
+      final remDays = days - (months * 30.4375).round();
+      if (remDays <= 0) return '$months mo';
+      return '$months mo $remDays d';
+    }
+    return '$days d';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final favorable = entry.favorable;
+    final hasWarning = !favorable && entry.warnings.isNotEmpty;
+    final tagColor = favorable
+        ? _favorableGreen
+        : hasWarning
+            ? Colors.amberAccent
+            : color;
+    final cardBg = favorable
+        ? _favorableGreen.withValues(alpha: 0.06)
+        : hasWarning
+            ? Colors.amberAccent.withValues(alpha: 0.05)
+            : Colors.white.withValues(alpha: 0.03);
+    final isActive = entry.isActive;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: tagColor.withValues(alpha: isActive ? 0.7 : 0.35),
+          width: isActive ? 1.4 : 1.0,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.18),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: color.withValues(alpha: 0.5)),
+                ),
+                alignment: Alignment.center,
+                child:
+                    Text(glyph, style: TextStyle(color: color, fontSize: 16)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          entry.planet,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold),
+                        ),
+                        if (entry.parent != null && entry.parent!.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            '· in ${entry.parent}',
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.5),
+                                fontSize: 11),
+                          ),
+                        ],
+                        const SizedBox(width: 6),
+                        if (favorable)
+                          _StatusPill(label: 'FAVORABLE', color: _favorableGreen),
+                        if (hasWarning)
+                          _StatusPill(label: 'CAUTION', color: Colors.amberAccent),
+                        if (isActive)
+                          _StatusPill(label: 'NOW', color: tagColor),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${_fmtDate(entry.startDate)}  →  ${_fmtDate(entry.endDate)}',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: tagColor.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  _humanDuration(entry.totalDuration),
+                  style: TextStyle(
+                      color: tagColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          if (entry.reasons.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ...entry.reasons.map((r) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(top: 3, right: 6),
+                        child: Icon(Icons.check_circle,
+                            color: _favorableGreen, size: 12),
+                      ),
+                      Expanded(
+                        child: Text(
+                          r,
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.85),
+                              fontSize: 12,
+                              height: 1.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+          ],
+          if (entry.warnings.isNotEmpty) ...[
+            if (entry.reasons.isEmpty) const SizedBox(height: 6),
+            ...entry.warnings.map((w) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(top: 3, right: 6),
+                        child: Icon(Icons.warning_amber_rounded,
+                            color: Colors.amberAccent, size: 12),
+                      ),
+                      Expanded(
+                        child: Text(
+                          w,
+                          style: TextStyle(
+                              color: Colors.amberAccent.withValues(alpha: 0.95),
+                              fontSize: 12,
                               height: 1.4),
                         ),
                       ),

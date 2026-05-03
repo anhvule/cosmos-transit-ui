@@ -160,6 +160,93 @@ class InvestmentFavorablePeriods {
       sookshmadashas.isEmpty;
 }
 
+/// Sub-period entry returned by /api/dasha-range. Same fields as a
+/// `DashaPeriodAnnotated` plus `parent` — the planet of the level above
+/// (MD planet for ADs, AD for PDs, PD for SDs). The UI uses `parent` to
+/// render the lineage ("Jupiter MD → Venus AD → Saturn PD → Mercury SD")
+/// next to each row.
+class DashaRangeEntry {
+  final String planet;
+  final String? parent;
+  final DateTime startDate;
+  final DateTime endDate;
+  final bool favorable;
+  final List<String> reasons;
+  final List<String> warnings;
+
+  DashaRangeEntry({
+    required this.planet,
+    required this.parent,
+    required this.startDate,
+    required this.endDate,
+    required this.favorable,
+    required this.reasons,
+    required this.warnings,
+  });
+
+  factory DashaRangeEntry.fromJson(Map<String, dynamic> json) =>
+      DashaRangeEntry(
+        planet: (json['planet'] ?? '') as String,
+        parent: json['parent'] as String?,
+        startDate: DateTime.parse(json['startDate'] as String),
+        endDate: DateTime.parse(json['endDate'] as String),
+        favorable: (json['favorable'] ?? false) as bool,
+        reasons: ((json['reasons'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        warnings: ((json['warnings'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+      );
+
+  Duration get totalDuration => endDate.difference(startDate);
+
+  bool get isActive {
+    final now = DateTime.now();
+    return !now.isBefore(startDate) && now.isBefore(endDate);
+  }
+}
+
+/// Result of /api/dasha-range — every MD/AD/PD/SD period overlapping the
+/// requested [fromDate, toDate] window, grouped by level.
+class DashaRange {
+  final String fromDate;
+  final String toDate;
+  final List<DashaRangeEntry> mahadashas;
+  final List<DashaRangeEntry> antardashas;
+  final List<DashaRangeEntry> pratyantardashas;
+  final List<DashaRangeEntry> sookshmadashas;
+
+  DashaRange({
+    required this.fromDate,
+    required this.toDate,
+    required this.mahadashas,
+    required this.antardashas,
+    required this.pratyantardashas,
+    required this.sookshmadashas,
+  });
+
+  static List<DashaRangeEntry> _list(dynamic raw) =>
+      ((raw as List?) ?? const [])
+          .map((e) => DashaRangeEntry.fromJson(e as Map<String, dynamic>))
+          .toList();
+
+  factory DashaRange.fromJson(Map<String, dynamic> json) => DashaRange(
+        fromDate: (json['fromDate'] ?? '') as String,
+        toDate: (json['toDate'] ?? '') as String,
+        mahadashas: _list(json['mahadashas']),
+        antardashas: _list(json['antardashas']),
+        pratyantardashas: _list(json['pratyantardashas']),
+        sookshmadashas: _list(json['sookshmadashas']),
+      );
+
+  bool get isEmpty =>
+      mahadashas.isEmpty &&
+      antardashas.isEmpty &&
+      pratyantardashas.isEmpty &&
+      sookshmadashas.isEmpty;
+}
+
 class DashaReading {
   final String date;
   final double moonLongitude;

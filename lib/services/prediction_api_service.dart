@@ -7,6 +7,7 @@ import '../models/essence_cycle.dart';
 import '../models/yearly_summary.dart';
 import '../models/monthly_prediction.dart';
 import '../models/wealth_analysis.dart';
+import '../models/favourite.dart';
 import 'api_cache_service.dart';
 
 class PredictionRequest {
@@ -15,7 +16,10 @@ class PredictionRequest {
   final String birthTime; // HH:mm
   final double latitude;
   final double longitude;
-  final String timezone;
+  // Numeric UTC offset in hours, e.g. 7 for Vietnam, -5 for US Eastern.
+  // The backend resolver maps this to an IANA fixed-offset zone before
+  // running the chart calculation.
+  final int timezone;
   final String transitDate; // YYYY-MM-DD
 
   PredictionRequest({
@@ -130,13 +134,17 @@ class PredictionApiService {
   }
 
   /// Shared payload (excluding the period-specific field).
+  ///
+  /// `timezone` is a numeric UTC offset in hours (e.g. 7, -5). The backend
+  /// accepts integers in the range [-12, 14]; fractional offsets are not
+  /// supported yet.
   static Map<String, dynamic> _baseBody({
     required String name,
     required String birthDate,
     required String birthTime,
     required double latitude,
     required double longitude,
-    required String timezone,
+    required int timezone,
   }) =>
       {
         'name': name,
@@ -153,7 +161,7 @@ class PredictionApiService {
     required String birthTime,
     required double latitude,
     required double longitude,
-    required String timezone,
+    required int timezone,
     required String weekStart, // YYYY-MM-DD
     bool forceRefresh = false,
   }) async {
@@ -213,7 +221,7 @@ class PredictionApiService {
     required String birthTime,
     required double latitude,
     required double longitude,
-    required String timezone,
+    required int timezone,
     required String month, // YYYY-MM
     bool forceRefresh = false,
   }) async {
@@ -253,6 +261,61 @@ class PredictionApiService {
       }
       throw Exception(
           'Failed to fetch monthly forecast: ${response.statusCode} ${response.body}');
+    } finally {
+      client.close();
+    }
+  }
+
+  /// Search every Vimshottari dasha period (MD/AD/PD/SD) overlapping
+  /// [fromDate, toDate]. Each entry is tagged with favorable / reasons /
+  /// warnings — same shape as /api/dasha. Backend caps the range at 10
+  /// years; the UI defaults to ~1 year.
+  static Future<DashaRange> fetchDashaRange({
+    required String name,
+    required String birthDate,
+    required String birthTime,
+    required double latitude,
+    required double longitude,
+    required int timezone,
+    required String fromDate,
+    required String toDate,
+    bool forceRefresh = false,
+  }) async {
+    const endpoint = 'dasha-range';
+    final body = <String, dynamic>{
+      ..._baseBody(
+        name: name,
+        birthDate: birthDate,
+        birthTime: birthTime,
+        latitude: latitude,
+        longitude: longitude,
+        timezone: timezone,
+      ),
+      'fromDate': fromDate,
+      'toDate': toDate,
+    };
+
+    if (!forceRefresh) {
+      final cached = ApiCacheService.read(endpoint, body);
+      if (cached != null) return DashaRange.fromJson(cached);
+    }
+
+    final client = http.Client();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('$_baseUrl/api/$endpoint'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        await ApiCacheService.write(endpoint, body, decoded);
+        return DashaRange.fromJson(decoded);
+      }
+      throw Exception(
+          'Failed to fetch dasha range: ${response.statusCode} ${response.body}');
     } finally {
       client.close();
     }
@@ -298,7 +361,7 @@ class PredictionApiService {
     required String birthTime,
     required double latitude,
     required double longitude,
-    required String timezone,
+    required int timezone,
     required int year,
     bool forceRefresh = false,
   }) async {
@@ -352,7 +415,7 @@ class PredictionApiService {
     required String birthTime,
     required double latitude,
     required double longitude,
-    required String timezone,
+    required int timezone,
     required int year,
     bool forceRefresh = false,
   }) async {
@@ -413,7 +476,7 @@ class PredictionApiService {
     required String birthTime,
     required double latitude,
     required double longitude,
-    required String timezone,
+    required int timezone,
     bool forceRefresh = false,
   }) async {
     const endpoint = 'wealth-analysis';
@@ -503,6 +566,70 @@ class PredictionApiService {
           'Failed to fetch essence cycle: ${response.statusCode} ${response.body}');
     } finally {
       client.close();
+    }
+  }
+
+  // ─── Favourites — per-user transit-date bookmarks ────────────────────────
+
+  /// Save a transit date to the user's favourites list with a memory note.
+  static Future<Favourite> createFavourite({
+    required String userKey,
+    required String transitDate, // YYYY-MM-DD
+    String? title,
+    required String description,
+  }) async {
+    final body = <String, dynamic>{
+      'userKey': userKey,
+      'transitDate': transitDate,
+      if (title != null && title.isNotEmpty) 'title': title,
+      'description': description,
+    };
+    final response = await http
+        .post(
+          Uri.parse('$_baseUrl/api/favourites'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode == 201) {
+      return Favourite.fromJson(
+          jsonDecode(response.body) as Map<String, dynamic>);
+    }
+    throw Exception(
+        'Failed to save favourite: ${response.statusCode} ${response.body}');
+  }
+
+  /// List all favourites belonging to the given device key, newest transit
+  /// dates first.
+  static Future<List<Favourite>> listFavourites(String userKey) async {
+    final response = await http
+        .get(Uri.parse(
+            '$_baseUrl/api/favourites?userKey=${Uri.encodeQueryComponent(userKey)}'))
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body) as List;
+      return decoded
+          .map((e) => Favourite.fromJson(e as Map<String, dynamic>))
+          .toList();
+    }
+    throw Exception(
+        'Failed to list favourites: ${response.statusCode} ${response.body}');
+  }
+
+  /// Delete one favourite. The server only deletes when the userKey matches
+  /// the row owner — a 404 means either the row doesn't exist or another
+  /// device wrote it.
+  static Future<void> deleteFavourite({
+    required int id,
+    required String userKey,
+  }) async {
+    final response = await http
+        .delete(Uri.parse(
+            '$_baseUrl/api/favourites/$id?userKey=${Uri.encodeQueryComponent(userKey)}'))
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode != 204) {
+      throw Exception(
+          'Failed to delete favourite: ${response.statusCode} ${response.body}');
     }
   }
 }
