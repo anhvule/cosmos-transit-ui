@@ -46,6 +46,20 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   hive_generator: ^2.0.1
   build_runner: ^2.4.0
+  # Generates all iOS / Android launcher-icon sizes from a single
+  # source image (assets/app_icon.png). Run with:
+  #   dart run flutter_launcher_icons
+  flutter_launcher_icons: ^0.14.1
+
+# Source image: assets/app_icon.png (cosmic-themed astrology wheel).
+# The image is 427×427 — Apple's App Store recommends 1024×1024 for
+# the marketing icon, so we'll see a slight upscale on the largest
+# size. Home-screen sizes (60×60@3x = 180px and below) are fine.
+flutter_launcher_icons:
+  ios: true
+  android: false # Project is iOS-only; no android/ directory exists.
+  image_path: "assets/app_icon.png"
+  remove_alpha_ios: true # iOS rejects icons with alpha channel
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
