@@ -1127,47 +1127,265 @@ class _CalibrationBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      decoration: BoxDecoration(
-        color: Colors.amberAccent.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.amberAccent.withValues(alpha: 0.35)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.only(top: 1, right: 8),
-            child: Icon(Icons.info_outline,
-                color: Colors.amberAccent, size: 16),
-          ),
-          Expanded(
-            child: RichText(
-              text: TextSpan(
-                style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.9),
-                    fontSize: 12,
-                    height: 1.4),
-                children: const [
-                  TextSpan(
-                    text: 'Personal capital-deployment guidance, not market timing.\n',
-                    style: TextStyle(
-                        color: Colors.amberAccent,
-                        fontWeight: FontWeight.w700),
-                  ),
-                  TextSpan(
-                    text:
-                        'Backtested against AMZN and S&P 500 milestones, '
-                        'this dasha-only model lands ~40% market-direction '
-                        'accuracy — no better than always saying bullish. '
-                        'It tracks YOUR fortune cycle, not the index. Treat '
-                        '"FAVORABLE" as "OK to deploy capital this period," '
-                        'not "the market will rise."',
-                  ),
-                ],
+    return InkWell(
+      onTap: () => _showTagsExplanationSheet(context),
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: Colors.amberAccent.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.amberAccent.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 1, right: 8),
+              child: Icon(Icons.info_outline,
+                  color: Colors.amberAccent, size: 16),
+            ),
+            Expanded(
+              child: RichText(
+                text: TextSpan(
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      fontSize: 12,
+                      height: 1.4),
+                  children: const [
+                    TextSpan(
+                      text: 'Personal capital-deployment guidance, not market timing.\n',
+                      style: TextStyle(
+                          color: Colors.amberAccent,
+                          fontWeight: FontWeight.w700),
+                    ),
+                    TextSpan(
+                      text:
+                          'Backtested against AMZN and S&P 500 milestones, '
+                          'this dasha-only model lands ~40% market-direction '
+                          'accuracy — no better than always saying bullish. '
+                          'It tracks YOUR fortune cycle, not the index. ',
+                    ),
+                    TextSpan(
+                      text: 'Tap to learn how to read the tags →',
+                      style: TextStyle(
+                          color: Colors.amberAccent,
+                          fontStyle: FontStyle.italic,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom sheet that explains how to read FAVORABLE / CAUTION / NEUTRAL
+/// tags as a "risk dial" rather than a strict on/off investment signal.
+/// Wired up via the tappable calibration banner above the dasha cards.
+void _showTagsExplanationSheet(BuildContext context) {
+  showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: const Color(0xFF1A1745),
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    ),
+    builder: (ctx) {
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Drag handle
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 14),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.25),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const Text(
+                'How to read these tags',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'They are a risk-dial setting, not a buy / sell signal.',
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.7), fontSize: 12),
+              ),
+              const SizedBox(height: 14),
+              const _TagRow(
+                label: 'FAVORABLE',
+                color: Color(0xFF4CD27E),
+                action: 'Normal-to-aggressive sizing.',
+                detail:
+                    'Deploy fresh capital. Take your highest-conviction shots. '
+                    'Lean in within reason — the model is ~40-70% market-direction '
+                    'accurate, not a guarantee.',
+              ),
+              const SizedBox(height: 10),
+              _TagRow(
+                label: 'CAUTION',
+                color: Colors.amberAccent,
+                action: 'Reduce risk, not exposure.',
+                detail:
+                    'Smaller positions, more diversification, prefer defensive / '
+                    'quality names, avoid leverage, no concentrated bets. '
+                    'KEEP investing — just more carefully. Sitting out every '
+                    'caution window would have you miss most bull markets.',
+              ),
+              const SizedBox(height: 10),
+              const _TagRow(
+                label: 'NEUTRAL',
+                color: Color(0xFF7C4DFF),
+                action: 'Default behavior.',
+                detail:
+                    'No strong dasha signal either way. Stick to your normal '
+                    'allocation; nothing in the chart is calling for special '
+                    'tilting in this period.',
+              ),
+              const SizedBox(height: 18),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.12)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.lightbulb_outline,
+                            color: Colors.amberAccent.withValues(alpha: 0.85),
+                            size: 14),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Rule of thumb',
+                          style: TextStyle(
+                              color: Colors.amberAccent
+                                  .withValues(alpha: 0.95),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Dollar-cost averaging through both window types '
+                      'beats anyone trying to time them on / off. The '
+                      'tags are most useful for tilting position sizing '
+                      'inside an always-invested portfolio: avoid '
+                      'leverage during CAUTION, take more concentrated '
+                      'swings during FAVORABLE — within the calibration '
+                      'caveat above.',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.85),
+                          fontSize: 12.5,
+                          height: 1.4),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xFF7C4DFF)),
+                  child: const Text('Got it'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// One row in the tags-explanation sheet — colored pill + headline
+/// action + 2-line detail.
+class _TagRow extends StatelessWidget {
+  final String label;
+  final Color color;
+  final String action;
+  final String detail;
+  const _TagRow({
+    required this.label,
+    required this.color,
+    required this.action,
+    required this.detail,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.25),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                      color: color,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.8),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  action,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            detail,
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.82),
+                fontSize: 12,
+                height: 1.4),
           ),
         ],
       ),
@@ -1175,9 +1393,28 @@ class _CalibrationBanner extends StatelessWidget {
   }
 }
 
+/// One-line tooltip text per pill label, used by the native Tooltip
+/// wrapper inside _StatusPill. Keeps the brief hint visible on
+/// long-press without competing with the full bottom-sheet
+/// explanation (open via the calibration banner above).
+const Map<String, String> _pillTooltips = {
+  'FAVORABLE':
+      'Deploy capital normally / lean in. Tap the calibration banner above for the full meaning.',
+  'CAUTION':
+      'Reduce risk, not exposure: smaller positions, no leverage. NOT a "stop investing" signal.',
+  'NEUTRAL':
+      'No strong signal either way — default position sizing.',
+  'NOW': 'You are currently inside this period.',
+  'GOOD': 'Period is favorable for personal capital deployment.',
+};
+
 /// Tiny inline status badge (FAVORABLE / CAUTION / NOW) used on the
 /// tagged-period cards. Color is supplied by the caller so the same pill
 /// renders green / amber / planet-tinted depending on context.
+///
+/// Wrapped in a native Tooltip — long-press the pill on the device to
+/// get a one-line explanation. For the full meaning + risk-dial guidance,
+/// users tap the calibration banner at the top of the screen.
 class _StatusPill extends StatelessWidget {
   final String label;
   final Color color;
@@ -1185,23 +1422,25 @@ class _StatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final pill = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+            color: color,
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.8),
+      ),
+    );
+    final tooltip = _pillTooltips[label];
     return Padding(
       padding: const EdgeInsets.only(right: 6),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.25),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-              color: color,
-              fontSize: 9,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.8),
-        ),
-      ),
+      child: tooltip == null ? pill : Tooltip(message: tooltip, child: pill),
     );
   }
 }
