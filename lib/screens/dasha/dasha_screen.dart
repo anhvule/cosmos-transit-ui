@@ -13,10 +13,63 @@ class DashaScreen extends StatefulWidget {
   State<DashaScreen> createState() => _DashaScreenState();
 }
 
+/// Comparison profiles bundled with the Vimshottari Dasha screen so the
+/// user can flip between their own chart and famous investors' charts
+/// to see how the dasha favorability landscape looks for each. Useful
+/// for empirical sanity-checking ("what does Burry's chart say about
+/// 2008? does it match what he actually did?") and for understanding
+/// the chart-relativity of the personal-fortune model.
+///
+/// Birth times for celebrities are noon-default (real birth times are
+/// not in the public record); MD ladder is insensitive to ±2h shifts.
+class DashaProfileOption {
+  final String label;
+  final String shortLabel;
+  final PredictionRequest request;
+  const DashaProfileOption({
+    required this.label,
+    required this.shortLabel,
+    required this.request,
+  });
+}
+
+const _burryProfile = DashaProfileOption(
+  label: 'Michael Burry (1971-06-19, San Jose)',
+  shortLabel: 'Burry',
+  request: PredictionRequest(
+    name: 'Michael Burry',
+    birthDate: '1971-06-19',
+    birthTime: '12:00',
+    latitude: 37.3382,
+    longitude: -121.8863,
+    timezone: -7, // PDT in June
+    transitDate: '',
+  ),
+);
+
+const _ackmanProfile = DashaProfileOption(
+  label: 'Bill Ackman (1966-05-11, Chappaqua NY)',
+  shortLabel: 'Ackman',
+  request: PredictionRequest(
+    name: 'Bill Ackman',
+    birthDate: '1966-05-11',
+    birthTime: '12:00',
+    latitude: 41.1570,
+    longitude: -73.7660,
+    timezone: -4, // EDT in May
+    transitDate: '',
+  ),
+);
+
 class _DashaScreenState extends State<DashaScreen> {
   DashaReading? _reading;
   String? _error;
   bool _loading = false;
+  // Active profile for /api/dasha + /api/dasha-range. Defaults to the
+  // user's chart (passed via widget.request); can be swapped to Burry
+  // or Ackman from the chip selector at the top.
+  late PredictionRequest _activeRequest;
+  late String _activeProfileKey; // 'self' | 'burry' | 'ackman'
 
   // ── Range-search state ────────────────────────────────────────────
   // The "Search dashas in date range" panel expands inline. From defaults
@@ -66,10 +119,54 @@ class _DashaScreenState extends State<DashaScreen> {
   @override
   void initState() {
     super.initState();
+    _activeRequest = widget.request;
+    _activeProfileKey = 'self';
     final today = DateTime.now();
     _searchFrom = DateTime(today.year, today.month, today.day);
     _searchTo = _searchFrom.add(const Duration(days: 365));
     WidgetsBinding.instance.addPostFrameCallback((_) => _fetch());
+  }
+
+  /// Switch the active chart between the user's own and the bundled
+  /// celebrity profiles (Burry / Ackman). Refetches /api/dasha for the
+  /// new chart and clears any prior search results so the screen
+  /// doesn't show mixed data.
+  void _selectProfile(String key) {
+    if (key == _activeProfileKey) return;
+    PredictionRequest req;
+    switch (key) {
+      case 'burry':
+        // Use the user's transit date so we compare apples-to-apples
+        // (the celebrity's chart, but the user's "as-of" moment).
+        req = _withTransitDate(_burryProfile.request, widget.request.transitDate);
+        break;
+      case 'ackman':
+        req = _withTransitDate(_ackmanProfile.request, widget.request.transitDate);
+        break;
+      case 'self':
+      default:
+        req = widget.request;
+    }
+    setState(() {
+      _activeProfileKey = key;
+      _activeRequest = req;
+      _reading = null;
+      _searchResult = null;
+      _searchError = null;
+    });
+    _fetch();
+  }
+
+  PredictionRequest _withTransitDate(PredictionRequest base, String transitDate) {
+    return PredictionRequest(
+      name: base.name,
+      birthDate: base.birthDate,
+      birthTime: base.birthTime,
+      latitude: base.latitude,
+      longitude: base.longitude,
+      timezone: base.timezone,
+      transitDate: transitDate,
+    );
   }
 
   String _ymd(DateTime d) =>
@@ -86,12 +183,12 @@ class _DashaScreenState extends State<DashaScreen> {
     });
     try {
       final r = await PredictionApiService.fetchDashaRange(
-        name: widget.request.name,
-        birthDate: widget.request.birthDate,
-        birthTime: widget.request.birthTime,
-        latitude: widget.request.latitude,
-        longitude: widget.request.longitude,
-        timezone: widget.request.timezone,
+        name: _activeRequest.name,
+        birthDate: _activeRequest.birthDate,
+        birthTime: _activeRequest.birthTime,
+        latitude: _activeRequest.latitude,
+        longitude: _activeRequest.longitude,
+        timezone: _activeRequest.timezone,
         fromDate: _ymd(_searchFrom),
         toDate: _ymd(_searchTo),
         forceRefresh: forceRefresh,
@@ -138,7 +235,7 @@ class _DashaScreenState extends State<DashaScreen> {
     });
     try {
       final result = await PredictionApiService.fetchDasha(
-        widget.request,
+        _activeRequest,
         forceRefresh: forceRefresh,
       );
       if (!mounted) return;
@@ -235,6 +332,8 @@ class _DashaScreenState extends State<DashaScreen> {
     return ListView(
       padding: EdgeInsets.fromLTRB(16, 16, 16, 24 + bottomInset),
       children: [
+        _buildProfileSelector(),
+        const SizedBox(height: 12),
         _buildHeader(r),
         const SizedBox(height: 12),
         const _CalibrationBanner(),
@@ -342,6 +441,80 @@ class _DashaScreenState extends State<DashaScreen> {
       _planetColor[planet] ?? const Color(0xFF7C4DFF);
 
   String _glyphFor(String planet) => _planetGlyph[planet] ?? '✦';
+
+  /// Profile selector at the top of the screen — chips for the user's
+  /// own chart and the bundled celebrity profiles. Tapping a chip
+  /// reloads the screen with that chart's dasha view. Useful for
+  /// comparing how the favorability landscape looks across different
+  /// natal charts (e.g. Burry's hyper-favored late-2000s vs Jack's).
+  Widget _buildProfileSelector() {
+    final selfLabel = widget.request.name.isEmpty
+        ? 'Your chart'
+        : '${widget.request.name} (you)';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF7C4DFF).withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+            color: const Color(0xFF7C4DFF).withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.person_outline,
+                  color: Colors.white70, size: 14),
+              const SizedBox(width: 6),
+              Text(
+                'View dasha for…',
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.7),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.6),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _profileChip('self', selfLabel),
+              _profileChip('burry', _burryProfile.shortLabel,
+                  tooltip: _burryProfile.label),
+              _profileChip('ackman', _ackmanProfile.shortLabel,
+                  tooltip: _ackmanProfile.label),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _profileChip(String key, String label, {String? tooltip}) {
+    final selected = _activeProfileKey == key;
+    final chip = ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => _selectProfile(key),
+      backgroundColor: Colors.white.withValues(alpha: 0.06),
+      selectedColor: const Color(0xFF7C4DFF).withValues(alpha: 0.4),
+      labelStyle: TextStyle(
+          color: selected ? Colors.white : Colors.white70,
+          fontSize: 12,
+          fontWeight: selected ? FontWeight.w700 : FontWeight.w500),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+              color: selected
+                  ? const Color(0xFF7C4DFF)
+                  : Colors.white.withValues(alpha: 0.15))),
+    );
+    return tooltip != null ? Tooltip(message: tooltip, child: chip) : chip;
+  }
 
   /// Collapsible "Search dashas in date range" panel. Header shows the
   /// active range + level; tapping the header expands the controls

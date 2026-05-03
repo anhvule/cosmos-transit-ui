@@ -657,14 +657,8 @@ class _PredictionsScreenState extends State<PredictionsScreen>
         return Icons.work_outline;
       case PredictionArea.relationship:
         return Icons.favorite_outline;
-      case PredictionArea.investment:
-        return Icons.account_balance_wallet_outlined;
       case PredictionArea.advice:
         return Icons.lightbulb_outline;
-      case PredictionArea.gain:
-        return Icons.trending_up;
-      case PredictionArea.loss:
-        return Icons.trending_down;
       case PredictionArea.food:
         return Icons.restaurant_menu;
     }

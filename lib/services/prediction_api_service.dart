@@ -22,7 +22,7 @@ class PredictionRequest {
   final int timezone;
   final String transitDate; // YYYY-MM-DD
 
-  PredictionRequest({
+  const PredictionRequest({
     required this.name,
     required this.birthDate,
     required this.birthTime,
@@ -43,13 +43,15 @@ class PredictionRequest {
       };
 }
 
+/// Non-investment prediction topics surfaced on the Predictions screen.
+/// Investment / gain / loss were removed because the dasha-only model
+/// is empirically uncalibrated for capital-deployment guidance — those
+/// concerns are now centralized on the dedicated Vimshottari Dasha
+/// screen with its accuracy banner.
 enum PredictionArea {
   career,
   relationship,
-  investment,
   advice,
-  gain,
-  loss,
   food,
 }
 
@@ -60,14 +62,8 @@ extension PredictionAreaLabel on PredictionArea {
         return 'Career';
       case PredictionArea.relationship:
         return 'Relationship';
-      case PredictionArea.investment:
-        return 'Investment';
       case PredictionArea.advice:
         return 'Advice';
-      case PredictionArea.gain:
-        return 'Gain';
-      case PredictionArea.loss:
-        return 'Loss';
       case PredictionArea.food:
         return 'Food';
     }
@@ -79,14 +75,8 @@ extension PredictionAreaLabel on PredictionArea {
         return 'career';
       case PredictionArea.relationship:
         return 'relationship';
-      case PredictionArea.investment:
-        return 'investment';
       case PredictionArea.advice:
         return 'advice';
-      case PredictionArea.gain:
-        return 'gain';
-      case PredictionArea.loss:
-        return 'loss';
       case PredictionArea.food:
         return 'food';
     }
