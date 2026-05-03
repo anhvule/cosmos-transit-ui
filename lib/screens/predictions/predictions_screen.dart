@@ -1397,8 +1397,43 @@ class _PredictionsScreenState extends State<PredictionsScreen>
               sublabel: 'Sub-sub-sub',
               period: r.sookshmadasha!),
         if (!r.investmentFavorable.isEmpty) ...[
-          const SizedBox(height: 20),
-          const _SectionHeader('Favorable for Investment'),
+          const SizedBox(height: 16),
+          // Empirical-accuracy disclaimer — same framing as the
+          // dedicated Vimshottari Dasha screen. Backtests against
+          // AMZN and S&P 500 show this model is for personal
+          // capital-deployment timing, not market direction.
+          Container(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+            decoration: BoxDecoration(
+              color: Colors.amberAccent.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                  color: Colors.amberAccent.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(top: 1, right: 6),
+                  child: Icon(Icons.info_outline,
+                      color: Colors.amberAccent, size: 13),
+                ),
+                Expanded(
+                  child: Text(
+                    'Personal capital-deployment guidance — backtested at '
+                    '~40% market-direction accuracy (AMZN + S&P 500). '
+                    'Tracks YOUR fortune cycle, not the index.',
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.85),
+                        fontSize: 11,
+                        height: 1.35),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          const _SectionHeader('Favorable Personal Windows'),
           ..._dashaTabFavorables(
               'Antardashas', r.investmentFavorable.antardashas),
           ..._dashaTabFavorables(

@@ -236,6 +236,8 @@ class _DashaScreenState extends State<DashaScreen> {
       padding: EdgeInsets.fromLTRB(16, 16, 16, 24 + bottomInset),
       children: [
         _buildHeader(r),
+        const SizedBox(height: 12),
+        const _CalibrationBanner(),
         const SizedBox(height: 16),
         _buildSearchPanel(),
         if (_searchResult != null) ..._buildSearchResults(_searchResult!),
@@ -270,23 +272,25 @@ class _DashaScreenState extends State<DashaScreen> {
             glyph: _glyphFor(sd.planet),
           ),
         ],
-        // ── Speculative-investment sub-period landscape ──
-        // Every AD/PD/SD is shown with its tag — green when favorable,
-        // amber when only warnings fire, neutral when neither — so users
-        // can scan the full speculation landscape at a glance.
+        // ── Personal capital-deployment sub-period landscape ──
+        // Every AD/PD/SD is shown with its tag — green when favorable
+        // for YOUR personal capital deployment, amber when caution
+        // applies, neutral when neither. Empirically these tags
+        // correlate with personal-fortune cycles, NOT broad-market
+        // direction (see calibration banner above).
         ..._buildTaggedSection(
           title: 'Antardashas',
-          sublabel: 'Within current Mahadasha',
+          sublabel: 'Your sub-periods within current Mahadasha',
           periods: r.antardashas,
         ),
         ..._buildTaggedSection(
           title: 'Pratyantardashas',
-          sublabel: 'Within current Antardasha',
+          sublabel: 'Your sub-periods within current Antardasha',
           periods: r.pratyantardashas,
         ),
         ..._buildTaggedSection(
           title: 'Sookshmadashas',
-          sublabel: 'Within current Pratyantardasha',
+          sublabel: 'Your sub-periods within current Pratyantardasha',
           periods: r.sookshmadashas,
         ),
       ],
@@ -367,7 +371,7 @@ class _DashaScreenState extends State<DashaScreen> {
                   Expanded(
                     child: _searchExpanded
                         ? const Text(
-                            'Search Dashas in Date Range',
+                            'Search Personal Capital-Deployment Windows',
                             style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 14,
@@ -932,6 +936,66 @@ class _DashaCard extends StatelessWidget {
                   ),
                 )),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Empirical-accuracy banner shown above the dasha results. Backtests
+/// against AMZN (10 milestones) and S&P 500 (20 milestones) showed
+/// ~40% market-direction accuracy — no better than the always-bullish
+/// baseline. The dasha API tracks the user's PERSONAL capital-
+/// deployment fortune, not broad-market timing. This banner makes that
+/// limitation legible so users don't over-trust the FAVORABLE flags
+/// as buy signals.
+class _CalibrationBanner extends StatelessWidget {
+  const _CalibrationBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: Colors.amberAccent.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.amberAccent.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 1, right: 8),
+            child: Icon(Icons.info_outline,
+                color: Colors.amberAccent, size: 16),
+          ),
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.9),
+                    fontSize: 12,
+                    height: 1.4),
+                children: const [
+                  TextSpan(
+                    text: 'Personal capital-deployment guidance, not market timing.\n',
+                    style: TextStyle(
+                        color: Colors.amberAccent,
+                        fontWeight: FontWeight.w700),
+                  ),
+                  TextSpan(
+                    text:
+                        'Backtested against AMZN and S&P 500 milestones, '
+                        'this dasha-only model lands ~40% market-direction '
+                        'accuracy — no better than always saying bullish. '
+                        'It tracks YOUR fortune cycle, not the index. Treat '
+                        '"FAVORABLE" as "OK to deploy capital this period," '
+                        'not "the market will rise."',
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
