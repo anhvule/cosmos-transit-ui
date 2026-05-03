@@ -104,6 +104,16 @@ class _DashaScreenState extends State<DashaScreen> {
     'sookshmadasha': 'Sookshmadasha',
   };
 
+  // ── Yearly Caution Forecast state ─────────────────────────────────
+  // Polls /api/caution-dates with a year input and renders the union
+  // of CAUTION pratyantardashas across Druckenmiller / Ackman / Soros
+  // profiles. Defaults to the current year; user can step back/forward.
+  bool _cautionExpanded = false;
+  bool _cautionLoading = false;
+  String? _cautionError;
+  CautionForecast? _cautionForecast;
+  late int _cautionYear;
+
   // Planet → glyph (Vedic / Western mix)
   static const Map<String, String> _planetGlyph = {
     'Sun': '☉',
@@ -138,7 +148,35 @@ class _DashaScreenState extends State<DashaScreen> {
     final today = DateTime.now();
     _searchFrom = DateTime(today.year, today.month, today.day);
     _searchTo = _searchFrom.add(const Duration(days: 365));
+    _cautionYear = today.year;
     WidgetsBinding.instance.addPostFrameCallback((_) => _fetch());
+  }
+
+  /// Load the cross-profile caution forecast for `_cautionYear`. Cached
+  /// per year via the existing ApiCacheService so flipping years is
+  /// instant after the first fetch.
+  Future<void> _loadCautionForecast({bool forceRefresh = false}) async {
+    setState(() {
+      _cautionLoading = true;
+      _cautionError = null;
+    });
+    try {
+      final result = await PredictionApiService.fetchCautionDates(
+        year: _cautionYear,
+        forceRefresh: forceRefresh,
+      );
+      if (!mounted) return;
+      setState(() {
+        _cautionForecast = result;
+        _cautionLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _cautionError = e.toString();
+        _cautionLoading = false;
+      });
+    }
   }
 
   /// Switch the active chart between the user's own and the bundled
@@ -358,6 +396,8 @@ class _DashaScreenState extends State<DashaScreen> {
         const SizedBox(height: 16),
         _buildSearchPanel(),
         if (_searchResult != null) ..._buildSearchResults(_searchResult!),
+        const SizedBox(height: 12),
+        _buildCautionForecastPanel(),
         const SizedBox(height: 20),
         _SectionHeader(label: 'Mahadasha', sublabel: 'Major period'),
         _DashaCard(
@@ -459,6 +499,204 @@ class _DashaScreenState extends State<DashaScreen> {
       _planetColor[planet] ?? const Color(0xFF7C4DFF);
 
   String _glyphFor(String planet) => _planetGlyph[planet] ?? '✦';
+
+  /// Yearly Caution Forecast panel — collapsible, defaults closed to
+  /// avoid cluttering the screen for users who don't care about
+  /// cross-profile caution windows. When opened, fetches from
+  /// /api/caution-dates and renders the union of CAUTION pratyantar-
+  /// dashas across Druckenmiller / Ackman / Soros for the selected
+  /// year. Year stepper lets users page through history or look ahead.
+  Widget _buildCautionForecastPanel() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.amberAccent.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: Colors.amberAccent.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: () {
+              setState(() => _cautionExpanded = !_cautionExpanded);
+              if (_cautionExpanded && _cautionForecast == null && !_cautionLoading) {
+                _loadCautionForecast();
+              }
+            },
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded,
+                      color: Colors.amberAccent, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Yearly Caution Forecast',
+                          style: TextStyle(
+                              color: Colors.amberAccent.withValues(alpha: 0.95),
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700),
+                        ),
+                        if (!_cautionExpanded)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              'CAUTION windows across Druckenmiller / Ackman / Soros — tap to expand',
+                              style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.6),
+                                  fontSize: 11),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: _cautionExpanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: const Icon(Icons.expand_more,
+                        color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedCrossFade(
+            firstChild: _buildCautionForecastBody(),
+            secondChild: const SizedBox(width: double.infinity, height: 0),
+            crossFadeState: _cautionExpanded
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            duration: const Duration(milliseconds: 220),
+            sizeCurve: Curves.easeInOut,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCautionForecastBody() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Year stepper
+          Row(
+            children: [
+              IconButton(
+                onPressed: _cautionLoading
+                    ? null
+                    : () {
+                        setState(() {
+                          _cautionYear--;
+                          _cautionForecast = null;
+                          _cautionError = null;
+                        });
+                        _loadCautionForecast();
+                      },
+                icon: const Icon(Icons.chevron_left,
+                    color: Colors.white70),
+                tooltip: 'Previous year',
+              ),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    '$_cautionYear',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: _cautionLoading
+                    ? null
+                    : () {
+                        setState(() {
+                          _cautionYear++;
+                          _cautionForecast = null;
+                          _cautionError = null;
+                        });
+                        _loadCautionForecast();
+                      },
+                icon: const Icon(Icons.chevron_right,
+                    color: Colors.white70),
+                tooltip: 'Next year',
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Pratyantardasha-level CAUTION windows (~50-100 days each) where '
+            'one of the contrarian charts hits warnings-only. '
+            'Overlapping windows from multiple profiles = stronger signal.',
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.62),
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+                height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          if (_cautionLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                  child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.amberAccent))),
+            )
+          else if (_cautionError != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(_cautionError!,
+                      style: const TextStyle(
+                          color: Colors.redAccent, fontSize: 12)),
+                  const SizedBox(height: 8),
+                  ElevatedButton(
+                    onPressed: () => _loadCautionForecast(forceRefresh: true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF7C4DFF),
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            )
+          else if (_cautionForecast != null) ...[
+            if (_cautionForecast!.periods.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'No CAUTION windows in $_cautionYear across the three profiles.',
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      fontSize: 12,
+                      fontStyle: FontStyle.italic),
+                ),
+              )
+            else
+              ..._cautionForecast!.periods
+                  .map((p) => _CautionPeriodCard(period: p)),
+          ],
+        ],
+      ),
+    );
+  }
 
   /// Profile selector at the top of the screen — chips for the user's
   /// own chart and the three bundled celebrity profiles
@@ -1879,6 +2117,166 @@ class _RangeEntryCard extends StatelessWidget {
                           w,
                           style: TextStyle(
                               color: Colors.amberAccent.withValues(alpha: 0.95),
+                              fontSize: 12,
+                              height: 1.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One CAUTION pratyantardasha card in the yearly forecast section.
+/// Compact: planet + parent breadcrumb, profile pill (color-coded),
+/// date range, duration, and warnings.
+class _CautionPeriodCard extends StatelessWidget {
+  final CautionPeriod period;
+  const _CautionPeriodCard({required this.period});
+
+  static const Map<String, Color> _profileColors = {
+    'druckenmiller': Color(0xFF7DD3C0), // teal
+    'ackman': Color(0xFFFFB347),        // orange
+    'soros': Color(0xFFFFB6C1),         // pink
+  };
+
+  String _fmt(DateTime d) => DateFormat('MMM d, yyyy').format(d.toLocal());
+
+  String _humanDuration(Duration d) {
+    final days = d.inDays;
+    if (days >= 30) {
+      final months = (days / 30.4375).floor();
+      final remDays = days - (months * 30.4375).round();
+      if (remDays <= 0) return '$months mo';
+      return '$months mo $remDays d';
+    }
+    return '$days d';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final profileColor =
+        _profileColors[period.profile] ?? Colors.amberAccent;
+    final isActive = period.isActive;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.amberAccent.withValues(alpha: isActive ? 0.1 : 0.05),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+            color: Colors.amberAccent.withValues(alpha: isActive ? 0.7 : 0.35),
+            width: isActive ? 1.4 : 1.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: profileColor.withValues(alpha: 0.22),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                      color: profileColor.withValues(alpha: 0.6)),
+                ),
+                child: Text(
+                  period.profileName.toUpperCase(),
+                  style: TextStyle(
+                      color: profileColor,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.8),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: RichText(
+                  overflow: TextOverflow.ellipsis,
+                  text: TextSpan(
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    children: [
+                      TextSpan(
+                        text: period.planet,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      if (period.parent != null && period.parent!.isNotEmpty)
+                        TextSpan(
+                          text: '  ·  in ${period.parent}',
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.55),
+                              fontSize: 11),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              if (isActive) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 5, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.amberAccent.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text(
+                    'NOW',
+                    style: TextStyle(
+                        color: Colors.amberAccent,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8),
+                  ),
+                ),
+              ],
+              Container(
+                margin: const EdgeInsets.only(left: 6),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.amberAccent.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  _humanDuration(period.totalDuration),
+                  style: TextStyle(
+                      color: Colors.amberAccent.withValues(alpha: 0.95),
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${_fmt(period.startDate)}  →  ${_fmt(period.endDate)}',
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.7), fontSize: 11),
+          ),
+          if (period.warnings.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ...period.warnings.map((w) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(top: 3, right: 6),
+                        child: Icon(Icons.warning_amber_rounded,
+                            color: Colors.amberAccent, size: 12),
+                      ),
+                      Expanded(
+                        child: Text(
+                          w,
+                          style: TextStyle(
+                              color: Colors.amberAccent.withValues(alpha: 0.92),
                               fontSize: 12,
                               height: 1.4),
                         ),

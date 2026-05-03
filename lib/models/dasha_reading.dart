@@ -247,6 +247,66 @@ class DashaRange {
       sookshmadashas.isEmpty;
 }
 
+/// One CAUTION pratyantardasha returned by /api/caution-dates — a
+/// ~50-100 day window where one of the bundled celebrity profiles
+/// (Druckenmiller / Ackman / Soros) hit pure warnings (no positives).
+/// The UI groups overlapping windows so users can spot dates where
+/// multiple contrarian charts agree.
+class CautionPeriod {
+  final String profile;       // 'druckenmiller' | 'ackman' | 'soros'
+  final String profileName;   // human-readable
+  final String planet;        // PD lord
+  final String? parent;       // parent AD lord
+  final DateTime startDate;
+  final DateTime endDate;
+  final List<String> warnings;
+
+  CautionPeriod({
+    required this.profile,
+    required this.profileName,
+    required this.planet,
+    required this.parent,
+    required this.startDate,
+    required this.endDate,
+    required this.warnings,
+  });
+
+  factory CautionPeriod.fromJson(Map<String, dynamic> json) => CautionPeriod(
+        profile: (json['profile'] ?? '') as String,
+        profileName: (json['profileName'] ?? '') as String,
+        planet: (json['planet'] ?? '') as String,
+        parent: json['parent'] as String?,
+        startDate: DateTime.parse(json['startDate'] as String),
+        endDate: DateTime.parse(json['endDate'] as String),
+        warnings: ((json['warnings'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+      );
+
+  Duration get totalDuration => endDate.difference(startDate);
+
+  bool get isActive {
+    final now = DateTime.now();
+    return !now.isBefore(startDate) && now.isBefore(endDate);
+  }
+}
+
+/// Result of /api/caution-dates — list of CAUTION windows for the
+/// requested year, sorted ascending by start date.
+class CautionForecast {
+  final int year;
+  final List<CautionPeriod> periods;
+
+  CautionForecast({required this.year, required this.periods});
+
+  factory CautionForecast.fromJson(Map<String, dynamic> json) => CautionForecast(
+        year: (json['year'] as num?)?.toInt() ?? 0,
+        periods: ((json['periods'] as List?) ?? const [])
+            .map((e) => CautionPeriod.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
 class DashaReading {
   final String date;
   final double moonLongitude;

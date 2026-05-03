@@ -256,6 +256,44 @@ class PredictionApiService {
     }
   }
 
+  /// Fetch the year's CAUTION pratyantardasha windows across the three
+  /// bundled celebrity profiles (Druckenmiller / Ackman / Soros). Used
+  /// by the "Yearly Caution Forecast" section on the Vimshottari Dasha
+  /// screen to highlight ~50-100-day windows where contrarian charts
+  /// agree the period needs risk-down posture.
+  static Future<CautionForecast> fetchCautionDates({
+    required int year,
+    bool forceRefresh = false,
+  }) async {
+    const endpoint = 'caution-dates';
+    final body = {'year': year};
+
+    if (!forceRefresh) {
+      final cached = ApiCacheService.read(endpoint, body);
+      if (cached != null) return CautionForecast.fromJson(cached);
+    }
+
+    final client = http.Client();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('$_baseUrl/api/$endpoint'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        await ApiCacheService.write(endpoint, body, decoded);
+        return CautionForecast.fromJson(decoded);
+      }
+      throw Exception(
+          'Failed to fetch caution dates: ${response.statusCode} ${response.body}');
+    } finally {
+      client.close();
+    }
+  }
+
   /// Search every Vimshottari dasha period (MD/AD/PD/SD) overlapping
   /// [fromDate, toDate]. Each entry is tagged with favorable / reasons /
   /// warnings — same shape as /api/dasha. Backend caps the range at 10
