@@ -16,12 +16,15 @@ class DashaScreen extends StatefulWidget {
 /// Comparison profiles bundled with the Vimshottari Dasha screen so the
 /// user can flip between their own chart and famous investors' charts
 /// to see how the dasha favorability landscape looks for each. Useful
-/// for empirical sanity-checking ("what does Burry's chart say about
-/// 2008? does it match what he actually did?") and for understanding
-/// the chart-relativity of the personal-fortune model.
+/// for empirical sanity-checking and for understanding the chart-relativity
+/// of the personal-fortune model.
 ///
-/// Birth times for celebrities are noon-default (real birth times are
-/// not in the public record); MD ladder is insensitive to ±2h shifts.
+/// The panel is verified-time-only — every chart's birth time is publicly
+/// attested (AstroDatabank Rodden A/AA or comparable journalistic source).
+/// Profiles with unknown birth times (Druckenmiller, Soros, etc.) were
+/// dropped because the natal Moon longitude — which seeds the entire
+/// Vimshottari ladder — shifts ~0.5°/hour and is unreliable on a noon
+/// chart. See backend services/market-signal.js for source citations.
 class DashaProfileOption {
   final String label;
   final String shortLabel;
@@ -33,44 +36,44 @@ class DashaProfileOption {
   });
 }
 
-const _druckenmillerProfile = DashaProfileOption(
-  label: 'Stanley Druckenmiller (1953-06-14, Pittsburgh)',
-  shortLabel: 'Druckenmiller',
+const _buffettProfile = DashaProfileOption(
+  label: 'Warren Buffett (1930-08-30 15:00, Omaha) — Rodden A',
+  shortLabel: 'Buffett',
   request: PredictionRequest(
-    name: 'Stanley Druckenmiller',
-    birthDate: '1953-06-14',
-    birthTime: '12:00',
-    latitude: 40.4406,
-    longitude: -79.9959,
-    timezone: -4, // EDT in June
-    transitDate: '',
-  ),
-);
-
-const _sorosProfile = DashaProfileOption(
-  label: 'George Soros (1930-08-12, Budapest)',
-  shortLabel: 'Soros',
-  request: PredictionRequest(
-    name: 'George Soros',
-    birthDate: '1930-08-12',
-    birthTime: '12:00',
-    latitude: 47.4979,
-    longitude: 19.0402,
-    timezone: 1, // CET (Budapest didn't observe DST in 1930)
+    name: 'Warren Buffett',
+    birthDate: '1930-08-30',
+    birthTime: '15:00',
+    latitude: 41.2565,
+    longitude: -95.9345,
+    timezone: -6, // CST, no DST in Omaha in 1930
     transitDate: '',
   ),
 );
 
 const _ackmanProfile = DashaProfileOption(
-  label: 'Bill Ackman (1966-05-11, Chappaqua NY)',
+  label: 'Bill Ackman (1966-05-11 00:30, Chappaqua NY) — Bloomberg',
   shortLabel: 'Ackman',
   request: PredictionRequest(
     name: 'Bill Ackman',
     birthDate: '1966-05-11',
-    birthTime: '12:00',
+    birthTime: '00:30',
     latitude: 41.1570,
     longitude: -73.7660,
     timezone: -4, // EDT in May
+    transitDate: '',
+  ),
+);
+
+const _bloombergProfile = DashaProfileOption(
+  label: 'Michael Bloomberg (1942-02-14 15:40 EWT, Brighton MA) — Rodden AA',
+  shortLabel: 'Bloomberg',
+  request: PredictionRequest(
+    name: 'Michael Bloomberg',
+    birthDate: '1942-02-14',
+    birthTime: '15:40',
+    latitude: 42.3496,
+    longitude: -71.1565,
+    timezone: -4, // EWT (Eastern War Time, year-round DST during WWII)
     transitDate: '',
   ),
 );
@@ -80,10 +83,11 @@ class _DashaScreenState extends State<DashaScreen> {
   String? _error;
   bool _loading = false;
   // Active profile for /api/dasha + /api/dasha-range. Defaults to the
-  // user's chart (passed via widget.request); can be swapped to Burry
-  // or Ackman from the chip selector at the top.
+  // user's chart (passed via widget.request); can be swapped to a
+  // verified-time celebrity (Buffett / Ackman / Bloomberg) via the chip
+  // selector at the top.
   late PredictionRequest _activeRequest;
-  late String _activeProfileKey; // 'self' | 'burry' | 'ackman'
+  late String _activeProfileKey; // 'self' | 'buffett' | 'ackman' | 'bloomberg'
 
   // ── Range-search state ────────────────────────────────────────────
   // The "Search dashas in date range" panel expands inline. From defaults
@@ -106,10 +110,10 @@ class _DashaScreenState extends State<DashaScreen> {
 
   // ── Yearly Caution Forecast state ─────────────────────────────────
   // Polls /api/caution-dates with a year + level input and renders the
-  // union of CAUTION periods across Druckenmiller / Ackman / Soros
-  // profiles. Defaults to the current year + pratyantardasha level
-  // (~50-100 day windows); switching to sookshmadasha gives ~5-10 day
-  // windows but ~10x more rows.
+  // union of CAUTION periods across the verified-time celebrity panel
+  // (Buffett / Ackman / Bloomberg). Defaults to the current year +
+  // pratyantardasha level (~50-100 day windows); switching to
+  // sookshmadasha gives ~5-10 day windows but ~10x more rows.
   bool _cautionExpanded = false;
   bool _cautionLoading = false;
   String? _cautionError;
@@ -184,24 +188,26 @@ class _DashaScreenState extends State<DashaScreen> {
   }
 
   /// Switch the active chart between the user's own and the bundled
-  /// celebrity profiles (Burry / Ackman). Refetches /api/dasha for the
-  /// new chart and clears any prior search results so the screen
-  /// doesn't show mixed data.
+  /// verified-time celebrity profiles (Buffett / Ackman / Bloomberg).
+  /// Refetches /api/dasha for the new chart and clears any prior search
+  /// results so the screen doesn't show mixed data.
   void _selectProfile(String key) {
     if (key == _activeProfileKey) return;
     PredictionRequest req;
     switch (key) {
-      case 'druckenmiller':
+      case 'buffett':
         // Use the user's transit date so we compare apples-to-apples
         // (the celebrity's chart, but the user's "as-of" moment).
         req = _withTransitDate(
-            _druckenmillerProfile.request, widget.request.transitDate);
-        break;
-      case 'soros':
-        req = _withTransitDate(_sorosProfile.request, widget.request.transitDate);
+            _buffettProfile.request, widget.request.transitDate);
         break;
       case 'ackman':
-        req = _withTransitDate(_ackmanProfile.request, widget.request.transitDate);
+        req = _withTransitDate(
+            _ackmanProfile.request, widget.request.transitDate);
+        break;
+      case 'bloomberg':
+        req = _withTransitDate(
+            _bloombergProfile.request, widget.request.transitDate);
         break;
       case 'self':
       default:
@@ -508,8 +514,9 @@ class _DashaScreenState extends State<DashaScreen> {
   /// avoid cluttering the screen for users who don't care about
   /// cross-profile caution windows. When opened, fetches from
   /// /api/caution-dates and renders the union of CAUTION pratyantar-
-  /// dashas across Druckenmiller / Ackman / Soros for the selected
-  /// year. Year stepper lets users page through history or look ahead.
+  /// dashas across the verified-time celebrity panel (Buffett / Ackman /
+  /// Bloomberg) for the selected year. Year stepper lets users page
+  /// through history or look ahead.
   Widget _buildCautionForecastPanel() {
     return Container(
       decoration: BoxDecoration(
@@ -552,7 +559,7 @@ class _DashaScreenState extends State<DashaScreen> {
                           Padding(
                             padding: const EdgeInsets.only(top: 2),
                             child: Text(
-                              'CAUTION windows across Druckenmiller / Ackman / Soros — tap to expand',
+                              'CAUTION windows across Buffett / Ackman / Bloomberg — tap to expand',
                               style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.6),
                                   fontSize: 11),
@@ -754,13 +761,13 @@ class _DashaScreenState extends State<DashaScreen> {
   }
 
   /// Profile selector at the top of the screen — chips for the user's
-  /// own chart and the three bundled celebrity profiles
-  /// (Druckenmiller, Soros, Ackman). These three were chosen because
-  /// each beat the always-bullish baseline in the AMZN/SPX backtest:
-  ///   • Druckenmiller +15% (best total accuracy, 50% bear-detection)
-  ///   • Soros        +24% (88% bear-detection — natural contrarian)
-  ///   • Ackman       +6%  (50% bear-detection)
-  /// Tapping a chip reloads the screen with that chart's dasha view.
+  /// own chart and the bundled verified-time celebrity profiles
+  /// (Buffett, Ackman, Bloomberg). The panel is restricted to investors
+  /// whose birth times are publicly attested (AstroDatabank Rodden A/AA
+  /// or comparable journalistic source) because the natal Moon longitude
+  /// — which seeds the entire Vimshottari ladder — is unreliable on a
+  /// noon chart. Tapping a chip reloads the screen with that chart's
+  /// dasha view.
   Widget _buildProfileSelector() {
     final selfLabel = widget.request.name.isEmpty
         ? 'Your chart'
@@ -797,12 +804,12 @@ class _DashaScreenState extends State<DashaScreen> {
             runSpacing: 6,
             children: [
               _profileChip('self', selfLabel),
-              _profileChip('druckenmiller', _druckenmillerProfile.shortLabel,
-                  tooltip: _druckenmillerProfile.label),
-              _profileChip('soros', _sorosProfile.shortLabel,
-                  tooltip: _sorosProfile.label),
+              _profileChip('buffett', _buffettProfile.shortLabel,
+                  tooltip: _buffettProfile.label),
               _profileChip('ackman', _ackmanProfile.shortLabel,
                   tooltip: _ackmanProfile.label),
+              _profileChip('bloomberg', _bloombergProfile.shortLabel,
+                  tooltip: _bloombergProfile.label),
             ],
           ),
         ],
@@ -2194,9 +2201,9 @@ class _CautionPeriodCard extends StatelessWidget {
   const _CautionPeriodCard({required this.period});
 
   static const Map<String, Color> _profileColors = {
-    'druckenmiller': Color(0xFF7DD3C0), // teal
-    'ackman': Color(0xFFFFB347),        // orange
-    'soros': Color(0xFFFFB6C1),         // pink
+    'buffett': Color(0xFF7DD3C0),   // teal
+    'ackman': Color(0xFFFFB347),    // orange
+    'bloomberg': Color(0xFFFFB6C1), // pink
   };
 
   String _fmt(DateTime d) => DateFormat('MMM d, yyyy').format(d.toLocal());

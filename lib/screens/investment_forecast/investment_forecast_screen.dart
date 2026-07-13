@@ -11,7 +11,7 @@ class ForecastInputs {
   final String birthTime; // HH:mm
   final double latitude;
   final double longitude;
-  final String timezone;
+  final int timezone; // UTC offset in hours
 
   ForecastInputs({
     required this.name,

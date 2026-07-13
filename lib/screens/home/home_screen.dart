@@ -5,6 +5,7 @@ import '../../providers/reading_provider.dart';
 import '../../services/storage_service.dart';
 import '../../widgets/focus_chip.dart';
 import '../../widgets/ad_banner.dart';
+import '../profiles/profiles_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -67,7 +68,27 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ],
                         ),
-                        const Text('✦', style: TextStyle(fontSize: 32)),
+                        // Profiles button: lets the user save / switch
+                        // between multiple charts without re-entering data.
+                        IconButton(
+                          tooltip: 'Saved profiles',
+                          icon: const Icon(Icons.people_outline,
+                              color: Colors.white),
+                          onPressed: () async {
+                            await Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const ProfilesScreen(),
+                              ),
+                            );
+                            // Active profile may have changed — refresh the
+                            // home reading using the new chart.
+                            if (!mounted) return;
+                            setState(() {});
+                            if (context.mounted) {
+                              context.read<ReadingProvider>().fetchReading();
+                            }
+                          },
+                        ),
                       ],
                     ),
                     const SizedBox(height: 32),

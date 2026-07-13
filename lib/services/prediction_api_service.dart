@@ -8,6 +8,7 @@ import '../models/yearly_summary.dart';
 import '../models/monthly_prediction.dart';
 import '../models/wealth_analysis.dart';
 import '../models/favourite.dart';
+import '../models/market_signal.dart';
 import 'api_cache_service.dart';
 
 class PredictionRequest {
@@ -595,6 +596,51 @@ class PredictionApiService {
       }
       throw Exception(
           'Failed to fetch essence cycle: ${response.statusCode} ${response.body}');
+    } finally {
+      client.close();
+    }
+  }
+
+  /// Fetch the weekly speculative-market signal aggregated across the
+  /// bundled famous-investor charts (Druckenmiller / Ackman / Soros).
+  /// Returns per-day verdicts (favourable / cautious / normal) plus the
+  /// per-investor breakdown.
+  ///
+  /// [weekStart] must be the YYYY-MM-DD of the week's Monday — the backend
+  /// returns the next 7 days inclusive.
+  static Future<WeeklyMarketSignal> fetchMarketSignalWeekly({
+    required String weekStart,
+    bool forceRefresh = false,
+  }) async {
+    const endpoint = 'market-signal-weekly';
+    final body = <String, dynamic>{'weekStart': weekStart};
+
+    if (!forceRefresh) {
+      final cached = ApiCacheService.read(endpoint, body,
+          scope: CacheScope.weekly);
+      if (cached != null) return WeeklyMarketSignal.fromJson(cached);
+    }
+
+    final client = http.Client();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('$_baseUrl/api/$endpoint'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          // 3 profiles × Python kerykeion batch over 7 days. Cold dyno can
+          // take noticeably longer than the per-profile investment-weekly
+          // call — give it generous headroom.
+          .timeout(const Duration(seconds: 90));
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        await ApiCacheService.write(endpoint, body, decoded,
+            scope: CacheScope.weekly);
+        return WeeklyMarketSignal.fromJson(decoded);
+      }
+      throw Exception(
+          'Failed to fetch weekly market signal: ${response.statusCode} ${response.body}');
     } finally {
       client.close();
     }
