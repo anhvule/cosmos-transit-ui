@@ -42,7 +42,12 @@ platform :ios do
     # the Flutter project root (this repo's root).
     sh("cd ../.. && flutter pub get && cd ios && bundle exec pod install && flutter build ios --release --no-codesign")
 
-    profile_name = ENV.fetch("IOS_PROVISIONING_PROFILE_NAME")
+    # Set by the workflow's "Install provisioning profile" step, derived from
+    # the installed .mobileprovision. Guard against a blank value here rather
+    # than letting update_code_signing_settings write an empty specifier
+    # (which fails later as "Runner requires a provisioning profile").
+    profile_name = ENV["IOS_PROVISIONING_PROFILE_NAME"].to_s
+    UI.user_error!("IOS_PROVISIONING_PROFILE_NAME is empty — the profile install step did not export a name. Check IOS_PROVISIONING_PROFILE_BASE64.") if profile_name.strip.empty?
 
     # Switch the Xcode project to manual signing pinned to the profile the
     # workflow imported into ~/Library/MobileDevice/Provisioning Profiles
@@ -56,6 +61,12 @@ platform :ios do
       profile_name: profile_name,
       targets: ["Runner"],
     )
+
+    # Diagnostic: confirm Manual signing + a non-empty specifier actually
+    # landed in the project before we archive. sh runs from ios/fastlane, so
+    # cd .. → ios.
+    UI.message("Signing Runner with provisioning profile: '#{profile_name}'")
+    sh("cd .. && grep -nE 'CODE_SIGN_STYLE|PROVISIONING_PROFILE_SPECIFIER|CODE_SIGN_IDENTITY = ' Runner.xcodeproj/project.pbxproj || true")
 
     build_app(
       workspace: "Runner.xcworkspace",
@@ -99,7 +110,12 @@ platform :ios do
 
     sh("cd ../.. && flutter pub get && cd ios && bundle exec pod install && flutter build ios --release --no-codesign")
 
-    profile_name = ENV.fetch("IOS_PROVISIONING_PROFILE_NAME")
+    # Set by the workflow's "Install provisioning profile" step, derived from
+    # the installed .mobileprovision. Guard against a blank value here rather
+    # than letting update_code_signing_settings write an empty specifier
+    # (which fails later as "Runner requires a provisioning profile").
+    profile_name = ENV["IOS_PROVISIONING_PROFILE_NAME"].to_s
+    UI.user_error!("IOS_PROVISIONING_PROFILE_NAME is empty — the profile install step did not export a name. Check IOS_PROVISIONING_PROFILE_BASE64.") if profile_name.strip.empty?
 
     update_code_signing_settings(
       use_automatic_signing: false,
@@ -110,6 +126,12 @@ platform :ios do
       profile_name: profile_name,
       targets: ["Runner"],
     )
+
+    # Diagnostic: confirm Manual signing + a non-empty specifier actually
+    # landed in the project before we archive. sh runs from ios/fastlane, so
+    # cd .. → ios.
+    UI.message("Signing Runner with provisioning profile: '#{profile_name}'")
+    sh("cd .. && grep -nE 'CODE_SIGN_STYLE|PROVISIONING_PROFILE_SPECIFIER|CODE_SIGN_IDENTITY = ' Runner.xcodeproj/project.pbxproj || true")
 
     build_app(
       workspace: "Runner.xcworkspace",
