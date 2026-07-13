@@ -31,7 +31,9 @@ class ApiCacheService {
   ///   v2 — backend essence-cycle off-by-one transit fix + shifted
   ///        duality convention (commits 84d0b5a, 544b51a). Older
   ///        entries hold the buggy values and must be invalidated.
-  static const String _cacheVersion = 'v2';
+  ///   v3 — backend host migrated Heroku → Render. Evict once so no
+  ///        install keeps serving Heroku-era cached responses.
+  static const String _cacheVersion = 'v3';
 
   static Box<String> get _box => Hive.box<String>(_boxName);
 

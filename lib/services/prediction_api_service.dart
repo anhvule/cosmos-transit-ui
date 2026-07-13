@@ -85,8 +85,7 @@ extension PredictionAreaLabel on PredictionArea {
 }
 
 class PredictionApiService {
-  static const String _baseUrl =
-      'https://radiant-mountain-37973-4b7f67ce5fbe.herokuapp.com';
+  static const String _baseUrl = 'https://cosmictransit-api.onrender.com';
 
   /// Last raw response body the essence-cycle endpoint returned (or last
   /// cached body it served). Exposed solely for the in-app debug overlay
