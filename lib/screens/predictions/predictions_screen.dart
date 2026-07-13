@@ -10,6 +10,7 @@ import '../../models/dasha_reading.dart';
 import '../../services/prediction_api_service.dart';
 import '../../services/storage_service.dart';
 import '../investment_forecast/investment_forecast_screen.dart';
+import '../market_signal/market_signal_screen.dart';
 import '../dasha/dasha_screen.dart';
 import '../essence_cycle/essence_cycle_screen.dart';
 import '../yearly/yearly_screen.dart';
@@ -473,6 +474,13 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     ));
   }
 
+  void _openMarketSignal() {
+    // Takes no user inputs — three celebrity natal charts are server-bundled.
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const MarketSignalScreen()),
+    );
+  }
+
   void _openWealth() {
     final req = _buildRequest();
     if (req == null) {
@@ -869,6 +877,9 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                   case _NavTarget.investmentForecast:
                     _openForecast();
                     break;
+                  case _NavTarget.marketSignal:
+                    _openMarketSignal();
+                    break;
                   case _NavTarget.varshaphal:
                     _openYearly();
                     break;
@@ -900,6 +911,12 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                   child: _MenuRow(
                       icon: Icons.insights,
                       label: 'Investment Forecast'),
+                ),
+                PopupMenuItem(
+                  value: _NavTarget.marketSignal,
+                  child: _MenuRow(
+                      icon: Icons.show_chart,
+                      label: 'Market Signal (Weekly)'),
                 ),
                 PopupMenuItem(
                   value: _NavTarget.varshaphal,
@@ -1619,6 +1636,7 @@ enum _NavTarget {
   essenceCycle,
   dasha,
   investmentForecast,
+  marketSignal,
   varshaphal,
   wealth,
   favourites,

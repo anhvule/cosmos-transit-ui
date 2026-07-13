@@ -23,13 +23,19 @@ class UserProfileAdapter extends TypeAdapter<UserProfile> {
       birthCity: fields[3] as String,
       latitude: fields[4] as double,
       longitude: fields[5] as double,
+      // field 6 was added later; default to 7 (Asia/Ho_Chi_Minh) for rows
+      // written before the timezone field existed.
+      timezone: (fields[6] as int?) ?? 7,
+      // field 7 (topics) was added later; default to empty (= "all topics")
+      // so existing rows keep showing every prediction tab after upgrade.
+      topics: (fields[7] as List?)?.cast<String>() ?? const [],
     );
   }
 
   @override
   void write(BinaryWriter writer, UserProfile obj) {
     writer
-      ..writeByte(6)
+      ..writeByte(8)
       ..writeByte(0)
       ..write(obj.name)
       ..writeByte(1)
@@ -41,7 +47,11 @@ class UserProfileAdapter extends TypeAdapter<UserProfile> {
       ..writeByte(4)
       ..write(obj.latitude)
       ..writeByte(5)
-      ..write(obj.longitude);
+      ..write(obj.longitude)
+      ..writeByte(6)
+      ..write(obj.timezone)
+      ..writeByte(7)
+      ..write(obj.topics);
   }
 
   @override

@@ -72,6 +72,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         birthCity: _cityController.text.trim(),
         latitude: location.latitude,
         longitude: location.longitude,
+        // Onboarding doesn't ask for timezone yet — default to UTC+7
+        // (Asia/Ho_Chi_Minh) and let the user override later from the
+        // Profiles screen.
+        timezone: 7,
       );
 
       await StorageService.saveProfile(profile);
