@@ -52,7 +52,9 @@ Repo → Settings → Secrets and variables → Actions → **New repository sec
 | `IOS_DIST_CERTIFICATE_BASE64` | Distribution certificate exported from Keychain as .p12, **base64-encoded** |
 | `IOS_DIST_CERTIFICATE_PASSWORD` | Password you set when exporting the .p12 |
 | `IOS_PROVISIONING_PROFILE_BASE64` | App Store provisioning profile (.mobileprovision) for the `Runner` target (`com.anhvule.cosmostransit`), **base64-encoded** |
-| `IOS_PROVISIONING_PROFILE_NAME` | Exact profile name as shown in developer.apple.com (e.g. "CosmicTransit App Store CI") |
+
+> The profile **name** is read automatically out of the profile at build time —
+> there's no `IOS_PROVISIONING_PROFILE_NAME` secret to keep in sync.
 
 ### How to generate the cert + profile secrets
 
@@ -80,8 +82,8 @@ The `cert` / `sigh` actions can create these via API key, but storing a known ce
    ```bash
    base64 -i CosmicTransit_App_Store_CI.mobileprovision | pbcopy
    ```
-   Paste into `IOS_PROVISIONING_PROFILE_BASE64`. Put the exact profile name into
-   `IOS_PROVISIONING_PROFILE_NAME` (must match what you typed in the portal).
+   Paste into `IOS_PROVISIONING_PROFILE_BASE64`. That's the only profile secret —
+   the workflow reads the profile's name and UUID out of the file itself.
 
 ---
 
@@ -116,8 +118,9 @@ The `cert` / `sigh` actions can create these via API key, but storing a known ce
 
 Useful for debugging signing without burning a CI minute. You must export the
 same env vars the workflow sets (`APPLE_TEAM_ID`, the three `APP_STORE_CONNECT_*`
-values, and `IOS_PROVISIONING_PROFILE_NAME`) and have the distribution cert +
-profile installed in your local keychain / Provisioning Profiles folder first:
+values, and `IOS_PROVISIONING_PROFILE_NAME` — the exact name of the profile you
+have installed locally) and have the distribution cert + profile installed in
+your local keychain / Provisioning Profiles folder first:
 
 ```bash
 cd ios
@@ -133,6 +136,7 @@ bundle exec fastlane beta
 |---|---|
 | `No provider was found.` on iOS install | Open Xcode > Settings > Accounts, sign in, click "Download Manual Profiles". Or run `flutter clean && cd ios && pod install`. |
 | `Invalid bundle id` on TestFlight upload | The app isn't registered in App Store Connect. Create it manually first with bundle id `com.anhvule.cosmostransit`. |
-| iOS lane fails at `gym`/`build_app` with provisioning errors | Confirm `IOS_PROVISIONING_PROFILE_NAME` matches the name *inside* the `.mobileprovision` exactly, and that the profile's App ID is `com.anhvule.cosmostransit`. Regenerate/re-download the profile if the App ID's capabilities changed after it was created. |
+| `Provisioning profile "…" is not an "iOS App Store" profile` at export | The profile in `IOS_PROVISIONING_PROFILE_BASE64` is a Development or Ad Hoc profile. Create an **App Store** one: developer.apple.com → Profiles → "+" → **Distribution → App Store Connect** → App ID `com.anhvule.cosmostransit` → your Apple Distribution cert. Re-encode and update the secret. |
+| iOS lane fails at `gym`/`build_app` with other provisioning errors | Confirm the profile's App ID is `com.anhvule.cosmostransit` and that it's signed by the same Apple Distribution cert you put in `IOS_DIST_CERTIFICATE_BASE64`. Regenerate/re-download the profile if the App ID's capabilities changed after it was created. |
 | `security find-identity` shows no identities in CI | The `.p12` in `IOS_DIST_CERTIFICATE_BASE64` doesn't contain both the cert *and* its private key. Re-export from Keychain via **My Certificates** (not the Certificates category), which bundles the key. |
 | Upload rejected: build number already used | Shouldn't happen — build number is the CI run number. If you ran a manual Xcode upload with a higher number, bump past it once. |

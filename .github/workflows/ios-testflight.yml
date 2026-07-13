@@ -34,6 +34,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fail fast with a legible message if any required secret is missing or
+      # empty, instead of dying ~3 min later inside xcodebuild with a cryptic
+      # "requires a provisioning profile" error.
+      - name: Validate required secrets
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          IOS_DIST_CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_BASE64 }}
+          IOS_DIST_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -uo pipefail
+          missing=0
+          for v in APPLE_TEAM_ID APP_STORE_CONNECT_KEY_ID APP_STORE_CONNECT_ISSUER_ID \
+                   APP_STORE_CONNECT_PRIVATE_KEY IOS_DIST_CERTIFICATE_BASE64 \
+                   IOS_DIST_CERTIFICATE_PASSWORD IOS_PROVISIONING_PROFILE_BASE64; do
+            if [ -z "${!v:-}" ]; then
+              echo "::error::Required secret $v is missing or empty."
+              missing=1
+            fi
+          done
+          if [ "$missing" != "0" ]; then
+            echo "Set the missing repo secrets under Settings → Secrets and variables → Actions. See CI_CD_SETUP.md §2."
+            exit 1
+          fi
+          echo "All required secrets present."
+
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -83,9 +112,13 @@ jobs:
           # Sanity check — should list at least one identity.
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      # Decode and install the App Store provisioning profile into the
-      # canonical location Xcode reads from. Single `Runner` target → one
-      # profile.
+      # Decode and install the App Store provisioning profile, then read its
+      # embedded Name / UUID straight out of the profile and export them for
+      # the Fastlane step. Deriving the name here (rather than from a separate
+      # secret) means the profile name can never drift out of sync — a blank
+      # or mismatched name is what produces "Runner requires a provisioning
+      # profile" at archive time. Xcode indexes installed profiles by the
+      # UUID filename, so we install it under "<UUID>.mobileprovision".
       - name: Install provisioning profile
         env:
           PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
@@ -93,9 +126,26 @@ jobs:
           set -euo pipefail
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILES_DIR"
-          echo -n "$PROFILE_BASE64" | base64 -d \
-            > "$PROFILES_DIR/cosmostransit_appstore.mobileprovision"
-          ls -la "$PROFILES_DIR"
+          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
+          PLIST="$RUNNER_TEMP/profile.plist"
+          echo -n "$PROFILE_BASE64" | base64 -d > "$PROFILE_PATH"
+          # Unwrap the CMS signature to get the raw plist.
+          security cms -D -i "$PROFILE_PATH" > "$PLIST"
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$PLIST")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$PLIST")
+          PROFILE_APPID=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PLIST")
+          # App Store distribution profiles do NOT enumerate devices. A profile
+          # that lists ProvisionedDevices is a Development or Ad Hoc profile and
+          # will fail exportArchive with "not an iOS App Store profile". Catch it
+          # here rather than after a ~2 min build.
+          if /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$PLIST" >/dev/null 2>&1; then
+            echo "::error::IOS_PROVISIONING_PROFILE_BASE64 is a Development/Ad Hoc profile (it lists ProvisionedDevices). TestFlight needs an *App Store* distribution profile. Recreate it at developer.apple.com → Certificates, Identifiers & Profiles → Profiles → '+' → Distribution → 'App Store Connect', for App ID com.anhvule.cosmostransit, then re-encode and update the secret."
+            exit 1
+          fi
+          cp "$PROFILE_PATH" "$PROFILES_DIR/$PROFILE_UUID.mobileprovision"
+          echo "Installed profile: name='$PROFILE_NAME' uuid=$PROFILE_UUID app-id=$PROFILE_APPID"
+          echo "IOS_PROVISIONING_PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "IOS_PROVISIONING_PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
 
       - name: Run Fastlane (${{ inputs.lane }})
         working-directory: ./ios
@@ -104,9 +154,9 @@ jobs:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
-          # Profile name must match exactly what's inside the .mobileprovision
-          # file you imported (e.g. "CosmicTransit App Store CI").
-          IOS_PROVISIONING_PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
+          # IOS_PROVISIONING_PROFILE_NAME / _UUID are exported into $GITHUB_ENV
+          # by the "Install provisioning profile" step above — derived from the
+          # profile itself, so no separate secret is needed.
           # GitHub run number is strictly increasing across all workflows
           # for this repo, so it works as a TestFlight build number.
           BUILD_NUMBER: ${{ github.run_number }}
