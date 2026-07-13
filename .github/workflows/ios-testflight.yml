@@ -134,6 +134,14 @@ jobs:
           PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$PLIST")
           PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$PLIST")
           PROFILE_APPID=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PLIST")
+          # App Store distribution profiles do NOT enumerate devices. A profile
+          # that lists ProvisionedDevices is a Development or Ad Hoc profile and
+          # will fail exportArchive with "not an iOS App Store profile". Catch it
+          # here rather than after a ~2 min build.
+          if /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$PLIST" >/dev/null 2>&1; then
+            echo "::error::IOS_PROVISIONING_PROFILE_BASE64 is a Development/Ad Hoc profile (it lists ProvisionedDevices). TestFlight needs an *App Store* distribution profile. Recreate it at developer.apple.com → Certificates, Identifiers & Profiles → Profiles → '+' → Distribution → 'App Store Connect', for App ID com.anhvule.cosmostransit, then re-encode and update the secret."
+            exit 1
+          fi
           cp "$PROFILE_PATH" "$PROFILES_DIR/$PROFILE_UUID.mobileprovision"
           echo "Installed profile: name='$PROFILE_NAME' uuid=$PROFILE_UUID app-id=$PROFILE_APPID"
           echo "IOS_PROVISIONING_PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
