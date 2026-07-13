@@ -117,3 +117,13 @@ app.*.symbols
 !**/ios/**/default.perspectivev3
 !/packages/flutter_tools/test/data/dart_dependencies_test/**/.packages
 !/dev/ci/**/Gemfile.lock
+# --- CI/CD signing material & fastlane artifacts (never commit) ---
+*.p8
+*.p12
+*.mobileprovision
+*.cer
+*.certSigningRequest
+ios/fastlane/report.xml
+ios/fastlane/README.md
+ios/fastlane/Preview.html
+ios/fastlane/test_output/
