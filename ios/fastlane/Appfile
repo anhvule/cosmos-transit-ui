@@ -1,0 +1,6 @@
+app_identifier("com.anhvule.cosmostransit") # The bundle identifier of your app
+# Apple Developer Team ID populated via env (CI uses APPLE_TEAM_ID secret).
+team_id(ENV["APPLE_TEAM_ID"]) if ENV["APPLE_TEAM_ID"]
+
+# For more information about the Appfile, see:
+#     https://docs.fastlane.tools/advanced/#appfile
