@@ -15,6 +15,7 @@ import '../dasha/dasha_screen.dart';
 import '../essence_cycle/essence_cycle_screen.dart';
 import '../yearly/yearly_screen.dart';
 import '../wealth/wealth_analysis_screen.dart';
+import '../mind_energy/mind_energy_screen.dart';
 import '../favourites/favourites_screen.dart';
 import '../profiles/profiles_screen.dart';
 import '../../widgets/cosmic_loader.dart';
@@ -494,6 +495,19 @@ class _PredictionsScreenState extends State<PredictionsScreen>
     );
   }
 
+  void _openMindEnergy() {
+    final req = _buildRequest();
+    if (req == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill all fields correctly.')),
+      );
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => MindEnergyScreen(request: req)),
+    );
+  }
+
   /// Quick-save the active transit date as a favourite without navigating
   /// away. Pops a tiny dialog for an optional title + a required memory note,
   /// POSTs to /api/favourites with the current `_transitDate`, and confirms
@@ -886,6 +900,9 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                   case _NavTarget.wealth:
                     _openWealth();
                     break;
+                  case _NavTarget.mindEnergy:
+                    _openMindEnergy();
+                    break;
                   case _NavTarget.favourites:
                     _openFavourites();
                     break;
@@ -929,6 +946,12 @@ class _PredictionsScreenState extends State<PredictionsScreen>
                   child: _MenuRow(
                       icon: Icons.diamond_outlined,
                       label: 'Wealth Analysis'),
+                ),
+                PopupMenuItem(
+                  value: _NavTarget.mindEnergy,
+                  child: _MenuRow(
+                      icon: Icons.psychology_outlined,
+                      label: 'Mind & Energy'),
                 ),
                 PopupMenuItem(
                   value: _NavTarget.favourites,
@@ -1639,6 +1662,7 @@ enum _NavTarget {
   marketSignal,
   varshaphal,
   wealth,
+  mindEnergy,
   favourites,
   profiles,
 }

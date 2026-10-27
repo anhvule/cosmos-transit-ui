@@ -9,6 +9,7 @@ import '../models/monthly_prediction.dart';
 import '../models/wealth_analysis.dart';
 import '../models/favourite.dart';
 import '../models/market_signal.dart';
+import '../models/mind_energy.dart';
 import 'api_cache_service.dart';
 
 class PredictionRequest {
@@ -437,6 +438,66 @@ class PredictionApiService {
     } finally {
       client.close();
     }
+  }
+
+  /// Daily overthinking / vitality scores (0–100) for one calendar month.
+  static Future<MindEnergyMonth> fetchMindEnergyMonthly({
+    required String name,
+    required String birthDate,
+    required String birthTime,
+    required double latitude,
+    required double longitude,
+    required int timezone,
+    required String month, // YYYY-MM
+    bool forceRefresh = false,
+  }) async {
+    const endpoint = 'mind-energy-monthly';
+    final body = {
+      ..._baseBody(
+        name: name,
+        birthDate: birthDate,
+        birthTime: birthTime,
+        latitude: latitude,
+        longitude: longitude,
+        timezone: timezone,
+      ),
+      'month': month,
+    };
+    final cacheBody = {...body, '_schema': 1};
+
+    if (!forceRefresh) {
+      final cached = ApiCacheService.read(endpoint, cacheBody,
+          scope: CacheScope.monthly);
+      if (cached != null) return MindEnergyMonth.fromJson(cached);
+    }
+
+    Future<http.Response> doPost() {
+      final client = http.Client();
+      return client
+          .post(
+            Uri.parse('$_baseUrl/api/$endpoint'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 60))
+          .whenComplete(client.close);
+    }
+
+    http.Response response;
+    try {
+      response = await doPost();
+    } on Exception {
+      // One retry — covers a cold server that's slow on the first hit.
+      response = await doPost();
+    }
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      await ApiCacheService.write(endpoint, cacheBody, decoded,
+          scope: CacheScope.monthly);
+      return MindEnergyMonth.fromJson(decoded);
+    }
+    throw Exception(
+        'Failed to fetch mind & energy: ${response.statusCode} ${response.body}');
   }
 
   /// Sun-transit monthly predictions for a Tajika year.
