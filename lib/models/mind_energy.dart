@@ -1,5 +1,6 @@
 class MindEnergyDriver {
-  final String metric; // 'overthinking' | 'vitality'
+  final String
+  metric; // 'overthinking' | 'vitality' | 'focus' | 'irritability' | 'steadiness'
   final String label;
   final double delta;
 
@@ -21,12 +22,18 @@ class MindEnergyDay {
   final String date; // YYYY-MM-DD
   final double overthinking;
   final double vitality;
+  final double focus;
+  final double irritability;
+  final double steadiness;
   final List<MindEnergyDriver> drivers;
 
   MindEnergyDay({
     required this.date,
     required this.overthinking,
     required this.vitality,
+    required this.focus,
+    required this.irritability,
+    required this.steadiness,
     required this.drivers,
   });
 
@@ -34,6 +41,9 @@ class MindEnergyDay {
     date: (json['date'] ?? '') as String,
     overthinking: (json['overthinking'] as num?)?.toDouble() ?? 0,
     vitality: (json['vitality'] as num?)?.toDouble() ?? 0,
+    focus: (json['focus'] as num?)?.toDouble() ?? 0,
+    irritability: (json['irritability'] as num?)?.toDouble() ?? 0,
+    steadiness: (json['steadiness'] as num?)?.toDouble() ?? 0,
     drivers: ((json['drivers'] as List?) ?? const [])
         .map((e) => MindEnergyDriver.fromJson(e as Map<String, dynamic>))
         .toList(),
