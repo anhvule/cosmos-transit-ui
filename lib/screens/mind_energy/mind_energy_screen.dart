@@ -386,6 +386,12 @@ class _Chart extends StatelessWidget {
         ),
         extraLinesData: ExtraLinesData(
           verticalLines: [
+            if (selectedDay != null)
+              VerticalLine(
+                x: selectedDay!.toDouble(),
+                color: Colors.white.withValues(alpha: 0.25),
+                strokeWidth: 1,
+              ),
             if (isCurrent)
               VerticalLine(
                 x: now.day.toDouble(),
@@ -405,9 +411,8 @@ class _Chart extends StatelessWidget {
             if (!event.isInterestedForInteractions) return;
             final spots = response?.lineBarSpots;
             if (spots == null || spots.isEmpty) return;
-            if (event is FlTapUpEvent || event is FlPanEndEvent) {
-              onSelect(spots.first.x.toInt());
-            }
+            // Select on tap and while dragging, so the marker follows the finger.
+            onSelect(spots.first.x.toInt());
           },
         ),
         lineBarsData: [
@@ -494,6 +499,14 @@ class _Score extends StatelessWidget {
   final Color color;
   const _Score({required this.label, required this.value, required this.color});
 
+  static String _level(double v) {
+    if (v < 25) return 'Very low';
+    if (v < 45) return 'Low';
+    if (v < 60) return 'Moderate';
+    if (v < 80) return 'High';
+    return 'Very high';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -503,12 +516,46 @@ class _Score extends StatelessWidget {
           label,
           style: const TextStyle(color: Colors.white70, fontSize: 12),
         ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Text(
+              value.round().toString(),
+              style: TextStyle(
+                color: color,
+                fontSize: 28,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            Text(
+              ' / 100',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.4),
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
         Text(
-          value.round().toString(),
+          _level(value),
           style: TextStyle(
             color: color,
-            fontSize: 28,
-            fontWeight: FontWeight.w800,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Padding(
+          padding: const EdgeInsets.only(right: 16),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: (value / 100).clamp(0.0, 1.0),
+              minHeight: 6,
+              color: color,
+              backgroundColor: Colors.white.withValues(alpha: 0.1),
+            ),
           ),
         ),
       ],
@@ -573,7 +620,7 @@ class _Explainer extends StatelessWidget {
         Text(
           'Overthinking estimates how busy and restless the mind may feel. '
           'Vitality combines mental stamina and physical energy. Both are '
-          'scored 0–100 each day from the transits against your birth chart.',
+          'scored 0–100 each day from the transits against your birth chart: under 25 is very low, 25–44 low, 45–59 moderate, 60–79 high, 80+ very high.',
           style: muted,
         ),
         const SizedBox(height: 8),
