@@ -33,7 +33,9 @@ class ApiCacheService {
   ///        entries hold the buggy values and must be invalidated.
   ///   v3 — backend host migrated Heroku → Render. Evict once so no
   ///        install keeps serving Heroku-era cached responses.
-  static const String _cacheVersion = 'v3';
+  ///   v4 — mind-energy-monthly adds focus / irritability / steadiness
+  ///        scores; older cached months lack them.
+  static const String _cacheVersion = 'v4';
 
   static Box<String> get _box => Hive.box<String>(_boxName);
 

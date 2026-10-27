@@ -10,8 +10,15 @@ void main() {
           'date': '2026-10-05',
           'overthinking': 72,
           'vitality': 40.5,
+          'focus': 61,
+          'irritability': 33,
+          'steadiness': 58.5,
           'drivers': [
-            {'metric': 'overthinking', 'label': 'Moon square Mercury', 'delta': 8},
+            {
+              'metric': 'overthinking',
+              'label': 'Moon square Mercury',
+              'delta': 8,
+            },
             {'metric': 'vitality', 'label': 'Mars trine Sun', 'delta': -3.5},
           ],
         },
@@ -22,6 +29,9 @@ void main() {
     expect(d.dayOfMonth, 5);
     expect(d.overthinking, 72.0);
     expect(d.vitality, 40.5);
+    expect(d.focus, 61.0);
+    expect(d.irritability, 33.0);
+    expect(d.steadiness, 58.5);
     expect(d.drivers, hasLength(2));
     expect(d.drivers[1].metric, 'vitality');
     expect(d.drivers[1].delta, -3.5);
@@ -37,6 +47,9 @@ void main() {
     expect(d.dayOfMonth, 0);
     expect(d.overthinking, 0);
     expect(d.vitality, 0);
+    expect(d.focus, 0);
+    expect(d.irritability, 0);
+    expect(d.steadiness, 0);
     expect(d.drivers, isEmpty);
 
     final dr = MindEnergyDriver.fromJson({});

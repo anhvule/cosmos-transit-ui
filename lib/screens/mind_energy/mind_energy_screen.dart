@@ -6,11 +6,44 @@ import '../../models/mind_energy.dart';
 import '../../services/prediction_api_service.dart';
 import '../../widgets/cosmic_loader.dart';
 
-const _overthinkingColor = Color(0xFFFBBF24);
-const _vitalityColor = Color(0xFF4ADE80);
+class _Metric {
+  final String key; // matches MindEnergyDriver.metric
+  final String label;
+  final Color color;
+  final double Function(MindEnergyDay) pick;
+  const _Metric(this.key, this.label, this.color, this.pick);
+}
 
-/// Monthly line chart of daily overthinking and vitality scores (0–100) —
-/// wraps /api/mind-energy-monthly. Tap a day to see its top drivers.
+final _metrics = <_Metric>[
+  _Metric(
+    'overthinking',
+    'Overthinking',
+    const Color(0xFFFBBF24),
+    (d) => d.overthinking,
+  ),
+  _Metric('vitality', 'Vitality', const Color(0xFF4ADE80), (d) => d.vitality),
+  _Metric('focus', 'Focus', const Color(0xFF60A5FA), (d) => d.focus),
+  _Metric(
+    'irritability',
+    'Irritability',
+    const Color(0xFFF87171),
+    (d) => d.irritability,
+  ),
+  _Metric(
+    'steadiness',
+    'Steadiness',
+    const Color(0xFFC084FC),
+    (d) => d.steadiness,
+  ),
+];
+
+Color _colorFor(String key) => _metrics
+    .firstWhere((m) => m.key == key, orElse: () => _metrics.first)
+    .color;
+
+/// Monthly line chart of daily Mind & Energy scores (0–100) — wraps
+/// /api/mind-energy-monthly. Tap a legend chip to show/hide a metric's line;
+/// tap a day to see all five scores and its top drivers.
 class MindEnergyScreen extends StatefulWidget {
   final PredictionRequest request;
 
@@ -26,6 +59,8 @@ class _MindEnergyScreenState extends State<MindEnergyScreen> {
   String? _error;
   bool _loading = false;
   int? _selectedDay;
+  // Two lines by default so the chart isn't crowded; the rest are a tap away.
+  final Set<String> _visible = {'overthinking', 'vitality'};
 
   @override
   void initState() {
@@ -168,7 +203,17 @@ class _MindEnergyScreenState extends State<MindEnergyScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _Legend(),
+        _Legend(
+          visible: _visible,
+          onToggle: (key) => setState(() {
+            // Keep at least one line on the chart.
+            if (_visible.contains(key)) {
+              if (_visible.length > 1) _visible.remove(key);
+            } else {
+              _visible.add(key);
+            }
+          }),
+        ),
         const SizedBox(height: 12),
         SizedBox(
           height: 260,
@@ -176,6 +221,7 @@ class _MindEnergyScreenState extends State<MindEnergyScreen> {
             data: data,
             month: _month,
             selectedDay: _selectedDay,
+            visible: _visible,
             onSelect: (day) => setState(() => _selectedDay = day),
           ),
         ),
@@ -236,34 +282,57 @@ class _MonthHeader extends StatelessWidget {
 }
 
 class _Legend extends StatelessWidget {
-  const _Legend();
+  final Set<String> visible;
+  final ValueChanged<String> onToggle;
+  const _Legend({required this.visible, required this.onToggle});
 
   @override
   Widget build(BuildContext context) {
-    Widget item(Color c, String label) => Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 14,
-          height: 4,
+    Widget item(_Metric m) {
+      final on = visible.contains(m.key);
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onToggle(m.key),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: c,
-            borderRadius: BorderRadius.circular(2),
+            color: on ? m.color.withValues(alpha: 0.15) : Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: on ? m.color : Colors.white.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 14,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: on ? m.color : Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                m.label,
+                style: TextStyle(
+                  color: on ? Colors.white : Colors.white54,
+                  fontSize: 12,
+                ),
+              ),
+            ],
           ),
         ),
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: const TextStyle(color: Colors.white70, fontSize: 12),
-        ),
-      ],
-    );
+      );
+    }
+
     return Wrap(
-      spacing: 16,
-      runSpacing: 6,
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        item(_overthinkingColor, 'Overthinking'),
-        item(_vitalityColor, 'Vitality'),
+        for (final m in _metrics) item(m),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -290,11 +359,13 @@ class _Chart extends StatelessWidget {
   final MindEnergyMonth data;
   final DateTime month;
   final int? selectedDay;
+  final Set<String> visible;
   final ValueChanged<int> onSelect;
   const _Chart({
     required this.data,
     required this.month,
     required this.selectedDay,
+    required this.visible,
     required this.onSelect,
   });
 
@@ -416,8 +487,8 @@ class _Chart extends StatelessWidget {
           },
         ),
         lineBarsData: [
-          _line(_overthinkingColor, (d) => d.overthinking),
-          _line(_vitalityColor, (d) => d.vitality),
+          for (final m in _metrics)
+            if (visible.contains(m.key)) _line(m.color, m.pick),
         ],
       ),
     );
@@ -435,7 +506,7 @@ class _DayCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final drivers = day.drivers.take(3).toList();
+    final drivers = day.drivers.take(5).toList();
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -455,23 +526,21 @@ class _DayCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _Score(
-                  label: 'Overthinking',
-                  value: day.overthinking,
-                  color: _overthinkingColor,
-                ),
-              ),
-              Expanded(
-                child: _Score(
-                  label: 'Vitality',
-                  value: day.vitality,
-                  color: _vitalityColor,
-                ),
-              ),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) => Wrap(
+              runSpacing: 14,
+              children: [
+                for (final m in _metrics)
+                  SizedBox(
+                    width: constraints.maxWidth / 2,
+                    child: _Score(
+                      label: m.label,
+                      value: m.pick(day),
+                      color: m.color,
+                    ),
+                  ),
+              ],
+            ),
           ),
           if (drivers.isNotEmpty) ...[
             const SizedBox(height: 14),
@@ -569,9 +638,7 @@ class _DriverRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = driver.metric == 'vitality'
-        ? _vitalityColor
-        : _overthinkingColor;
+    final color = _colorFor(driver.metric);
     final sign = driver.delta > 0 ? '+' : (driver.delta < 0 ? '−' : '');
     final value = driver.delta.abs();
     final text = value == value.roundToDouble()
@@ -619,7 +686,10 @@ class _Explainer extends StatelessWidget {
       children: [
         Text(
           'Overthinking estimates how busy and restless the mind may feel. '
-          'Vitality combines mental stamina and physical energy. Both are '
+          'Vitality combines mental stamina and physical energy. '
+          'Focus reflects mental clarity and concentration. '
+          'Irritability shows how short your temper may run. '
+          'Steadiness reflects how emotionally settled you may feel. All are '
           'scored 0–100 each day from the transits against your birth chart: under 25 is very low, 25–44 low, 45–59 moderate, 60–79 high, 80+ very high.',
           style: muted,
         ),
