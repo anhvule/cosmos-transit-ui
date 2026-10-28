@@ -25,13 +25,12 @@ dart run flutter_launcher_icons
 
 ## Architecture
 
-**State management:** a single `ChangeNotifierProvider<ReadingProvider>` wraps the app in [lib/main.dart](lib/main.dart); most screens instead call service classes directly and manage their own `StatefulWidget` state rather than going through `ReadingProvider` (which only backs the legacy daily-reading flow).
+**State management:** screens call service classes directly and manage their own `StatefulWidget` state; there is no app-wide provider (the legacy `ReadingProvider` flow was removed).
 
-**Two separate backends, two separate service classes:**
-- `ApiService` ([lib/services/api_service.dart](lib/services/api_service.dart)) — legacy single daily-reading endpoint, hardcoded to `http://localhost:3000`, used only by `ReadingProvider`.
+**Backend client:**
 - `PredictionApiService` ([lib/services/prediction_api_service.dart](lib/services/prediction_api_service.dart)) — the real backend (Heroku), backs every current screen: career/relationship/advice/food predictions, investment forecasts, dasha, yearly summary, monthly prediction, wealth analysis, essence cycle, market signal, and the favourites CRUD endpoints. Each fetch method follows the same shape: check `ApiCacheService` unless `forceRefresh`, POST/GET, decode, write-through cache, return a typed model.
 
-**Entry point / navigation:** [lib/main.dart](lib/main.dart) sets `home:` directly to `PredictionsScreen`, which is the real hub screen (~1600 lines) containing tabs/menu rows that push to every feature screen (dasha, investment forecast, yearly, wealth, essence cycle, market signal, favourites, profiles). `SplashScreen` → `HomeScreen` (onboarding-gate flow) exists in the tree but is **not** wired up from `main.dart` — don't assume it runs.
+**Entry point / navigation:** [lib/main.dart](lib/main.dart) sets `home:` directly to `PredictionsScreen`, which is the real hub screen (~1600 lines) containing tabs/menu rows that push to every feature screen (dasha, investment forecast, yearly, wealth, essence cycle, market signal, favourites, profiles).
 
 **Caching (`ApiCacheService`, [lib/services/api_cache_service.dart](lib/services/api_cache_service.dart)):** period-scoped local cache over the Hive `cache` box. Cache keys encode a bucket (`d:<today>` / `w:<monday>` / `m:<YYYY-MM>`) so entries auto-expire when the period rolls; `sweepStaleEntries()` (called on app start) purges unreachable keys. A module-level `_cacheVersion` constant is bumped whenever a backend response-shape/bug fix would make old cached values wrong — this forces a one-time full-cache eviction. When changing what a `PredictionApiService` endpoint returns, bump `_cacheVersion` (or add a payload `_schema` field, as `fetchMonthlyPrediction` does) rather than relying on natural cache expiry.
 
