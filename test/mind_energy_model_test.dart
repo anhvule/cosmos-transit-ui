@@ -37,6 +37,22 @@ void main() {
     expect(d.drivers[1].delta, -3.5);
   });
 
+  test('parses the dasha period and tolerates its absence', () {
+    final d = MindEnergyDay.fromJson({
+      'date': '2026-09-01',
+      'period': {
+        'mahadasha': 'Jupiter',
+        'antardasha': 'Moon',
+        'pratyantardasha': 'Saturn',
+        'pratyantardashaStart': '2026-07-08',
+        'pratyantardashaEnd': '2026-09-23',
+      },
+    });
+    expect(d.period!.pratyantardasha, 'Saturn');
+    expect(d.period!.pratyantardashaEnd, '2026-09-23');
+    expect(MindEnergyDay.fromJson({'date': '2026-09-01'}).period, isNull);
+  });
+
   test('missing and null fields fall back to defaults', () {
     final m = MindEnergyMonth.fromJson({'days': null});
     expect(m.month, '');

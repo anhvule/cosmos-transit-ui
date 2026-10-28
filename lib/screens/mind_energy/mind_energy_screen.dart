@@ -42,8 +42,10 @@ Color _colorFor(String key) => _metrics
     .color;
 
 /// Monthly line chart of daily Mind & Energy scores (0–100) — wraps
-/// /api/mind-energy-monthly. Tap a legend chip to show/hide a metric's line;
-/// tap a day to see all five scores and its top drivers.
+/// /api/mind-energy-monthly. Also fetches the previous month so each metric's
+/// monthly average can be compared, since the Moon's daily swings hide slower
+/// shifts (sub-periods, Saturn). Tap a legend chip to show/hide a metric's
+/// line; tap a day to see all five scores and its top drivers.
 class MindEnergyScreen extends StatefulWidget {
   final PredictionRequest request;
 
@@ -56,9 +58,10 @@ class MindEnergyScreen extends StatefulWidget {
 class _MindEnergyScreenState extends State<MindEnergyScreen> {
   late DateTime _month; // first day of the displayed month
   MindEnergyMonth? _data;
+  MindEnergyMonth? _previous; // month before, for the averages comparison
   String? _error;
   bool _loading = false;
-  int? _selectedDay;
+  String? _selectedDate; // YYYY-MM-DD
   // Two lines by default so the chart isn't crowded; the rest are a tap away.
   final Set<String> _visible = {'overthinking', 'vitality'};
 
@@ -72,6 +75,18 @@ class _MindEnergyScreenState extends State<MindEnergyScreen> {
 
   String get _monthKey => DateFormat('yyyy-MM').format(_month);
 
+  Future<MindEnergyMonth> _fetchMonth(DateTime month, bool forceRefresh) =>
+      PredictionApiService.fetchMindEnergyMonthly(
+        name: widget.request.name,
+        birthDate: widget.request.birthDate,
+        birthTime: widget.request.birthTime,
+        latitude: widget.request.latitude,
+        longitude: widget.request.longitude,
+        timezone: widget.request.timezone,
+        month: DateFormat('yyyy-MM').format(month),
+        forceRefresh: forceRefresh,
+      );
+
   Future<void> _fetch({bool forceRefresh = false}) async {
     final requested = _monthKey;
     setState(() {
@@ -79,26 +94,20 @@ class _MindEnergyScreenState extends State<MindEnergyScreen> {
       _error = null;
     });
     try {
-      final result = await PredictionApiService.fetchMindEnergyMonthly(
-        name: widget.request.name,
-        birthDate: widget.request.birthDate,
-        birthTime: widget.request.birthTime,
-        latitude: widget.request.latitude,
-        longitude: widget.request.longitude,
-        timezone: widget.request.timezone,
-        month: requested,
-        forceRefresh: forceRefresh,
-      );
+      // The previous month only feeds the comparison, so its failure is not fatal.
+      final previous = _fetchMonth(
+        DateTime(_month.year, _month.month - 1),
+        forceRefresh,
+      ).then<MindEnergyMonth?>((m) => m, onError: (_) => null);
+      final result = await _fetchMonth(_month, forceRefresh);
+      final prev = await previous;
       if (!mounted || requested != _monthKey) return;
-      final now = DateTime.now();
-      final isCurrent = _month.year == now.year && _month.month == now.month;
+      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
       setState(() {
         _data = result;
+        _previous = prev;
         _loading = false;
-        _selectedDay =
-            isCurrent && result.days.any((d) => d.dayOfMonth == now.day)
-            ? now.day
-            : null;
+        _selectedDate = result.days.any((d) => d.date == today) ? today : null;
       });
     } catch (e) {
       if (!mounted || requested != _monthKey) return;
@@ -113,7 +122,8 @@ class _MindEnergyScreenState extends State<MindEnergyScreen> {
     setState(() {
       _month = DateTime(_month.year, _month.month + delta);
       _data = null;
-      _selectedDay = null;
+      _previous = null;
+      _selectedDate = null;
     });
     _fetch();
   }
@@ -186,7 +196,11 @@ class _MindEnergyScreenState extends State<MindEnergyScreen> {
       );
     }
     final data = _data;
-    if (data == null || data.days.isEmpty) {
+    final days = [
+      for (final d in data?.days ?? const <MindEnergyDay>[])
+        if (d.dayOfMonth > 0) d,
+    ];
+    if (days.isEmpty) {
       return const SizedBox(
         height: 200,
         child: Center(
@@ -196,8 +210,8 @@ class _MindEnergyScreenState extends State<MindEnergyScreen> {
     }
 
     MindEnergyDay? selected;
-    for (final d in data.days) {
-      if (d.dayOfMonth == _selectedDay) selected = d;
+    for (final d in days) {
+      if (d.date == _selectedDate) selected = d;
     }
 
     return Column(
@@ -218,13 +232,16 @@ class _MindEnergyScreenState extends State<MindEnergyScreen> {
         SizedBox(
           height: 260,
           child: _Chart(
-            data: data,
-            month: _month,
-            selectedDay: _selectedDay,
+            days: days,
+            selectedDate: _selectedDate,
             visible: _visible,
-            onSelect: (day) => setState(() => _selectedDay = day),
+            onSelect: (date) => setState(() => _selectedDate = date),
           ),
         ),
+        const SizedBox(height: 12),
+        _PeriodStrip(days: days),
+        const SizedBox(height: 12),
+        _MonthAverages(month: data!, previous: _previous, visible: _visible),
         const SizedBox(height: 16),
         if (selected != null)
           _DayCard(day: selected)
@@ -356,28 +373,23 @@ class _Legend extends StatelessWidget {
 }
 
 class _Chart extends StatelessWidget {
-  final MindEnergyMonth data;
-  final DateTime month;
-  final int? selectedDay;
+  final List<MindEnergyDay> days; // one month, oldest first
+  final String? selectedDate;
   final Set<String> visible;
-  final ValueChanged<int> onSelect;
+  final ValueChanged<String> onSelect;
   const _Chart({
-    required this.data,
-    required this.month,
-    required this.selectedDay,
+    required this.days,
+    required this.selectedDate,
     required this.visible,
     required this.onSelect,
   });
 
-  List<FlSpot> _spots(double Function(MindEnergyDay) pick) => [
-    for (final d in data.days)
-      if (d.dayOfMonth > 0) FlSpot(d.dayOfMonth.toDouble(), pick(d)),
-  ];
-
   LineChartBarData _line(Color color, double Function(MindEnergyDay) pick) {
-    final spots = _spots(pick);
     return LineChartBarData(
-      spots: spots,
+      spots: [
+        for (var i = 0; i < days.length; i++)
+          FlSpot(i.toDouble(), pick(days[i])),
+      ],
       isCurved: true,
       curveSmoothness: 0.2,
       preventCurveOverShooting: true,
@@ -385,7 +397,7 @@ class _Chart extends StatelessWidget {
       barWidth: 2.5,
       dotData: FlDotData(
         show: true,
-        checkToShowDot: (spot, _) => spot.x.toInt() == selectedDay,
+        checkToShowDot: (spot, _) => days[spot.x.toInt()].date == selectedDate,
         getDotPainter: (spot, a, b, c) => FlDotCirclePainter(
           radius: 5,
           color: color,
@@ -396,18 +408,38 @@ class _Chart extends StatelessWidget {
     );
   }
 
+  /// Indexes where the sub-period lord changes from the previous day.
+  List<int> _periodChanges() => [
+    for (var i = 1; i < days.length; i++)
+      if (days[i].period?.pratyantardasha != null &&
+          days[i - 1].period?.pratyantardasha != null &&
+          days[i].period!.pratyantardasha !=
+              days[i - 1].period!.pratyantardasha)
+        i,
+  ];
+
   @override
   Widget build(BuildContext context) {
-    final daysInMonth = DateUtils.getDaysInMonth(month.year, month.month);
-    final now = DateTime.now();
-    final isCurrent = month.year == now.year && month.month == now.month;
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final todayIdx = days.indexWhere((d) => d.date == today);
+    final selectedIdx = days.indexWhere((d) => d.date == selectedDate);
     final gridColor = Colors.white.withValues(alpha: 0.08);
     const labelStyle = TextStyle(color: Colors.white54, fontSize: 10);
 
+    String? bottomLabel(int i) {
+      final d = days[i];
+      final last = days.length;
+      final show =
+          d.dayOfMonth == 1 ||
+          d.dayOfMonth == last ||
+          (d.dayOfMonth % 5 == 0 && d.dayOfMonth <= last - 2);
+      return show ? '${d.dayOfMonth}' : null;
+    }
+
     return LineChart(
       LineChartData(
-        minX: 1,
-        maxX: daysInMonth.toDouble(),
+        minX: 0,
+        maxX: (days.length - 1).toDouble(),
         minY: 0,
         maxY: 100,
         clipData: const FlClipData.all(),
@@ -439,33 +471,60 @@ class _Chart extends StatelessWidget {
               reservedSize: 22,
               interval: 1,
               getTitlesWidget: (v, meta) {
-                final day = v.toInt();
-                final show =
-                    day == 1 ||
-                    day == daysInMonth ||
-                    (day % 5 == 0 && day <= daysInMonth - 2);
-                if (!show || v != day.toDouble()) {
-                  return const SizedBox.shrink();
-                }
+                final i = v.toInt();
+                final label = v == i.toDouble() && i >= 0 && i < days.length
+                    ? bottomLabel(i)
+                    : null;
+                if (label == null) return const SizedBox.shrink();
                 return SideTitleWidget(
                   axisSide: meta.axisSide,
-                  child: Text('$day', style: labelStyle),
+                  child: Text(label, style: labelStyle),
                 );
               },
             ),
           ),
         ),
         extraLinesData: ExtraLinesData(
+          // Each visible metric's monthly average, so the month's overall
+          // level reads at a glance under the daily swings.
+          horizontalLines: [
+            for (final m in _metrics)
+              if (visible.contains(m.key))
+                HorizontalLine(
+                  y: days.map(m.pick).reduce((a, b) => a + b) / days.length,
+                  color: m.color.withValues(alpha: 0.55),
+                  strokeWidth: 1,
+                  dashArray: [6, 4],
+                ),
+          ],
           verticalLines: [
-            if (selectedDay != null)
+            for (final i in _periodChanges())
               VerticalLine(
-                x: selectedDay!.toDouble(),
+                x: i.toDouble(),
+                color: const Color(0xFFB39DDB).withValues(alpha: 0.7),
+                strokeWidth: 1.2,
+                dashArray: [2, 3],
+                label: VerticalLineLabel(
+                  show: true,
+                  alignment: Alignment.topRight,
+                  padding: const EdgeInsets.only(left: 4, top: 2),
+                  style: const TextStyle(
+                    color: Color(0xFFB39DDB),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  labelResolver: (_) => days[i].period!.pratyantardasha!,
+                ),
+              ),
+            if (selectedIdx >= 0)
+              VerticalLine(
+                x: selectedIdx.toDouble(),
                 color: Colors.white.withValues(alpha: 0.25),
                 strokeWidth: 1,
               ),
-            if (isCurrent)
+            if (todayIdx >= 0)
               VerticalLine(
-                x: now.day.toDouble(),
+                x: todayIdx.toDouble(),
                 color: Colors.white.withValues(alpha: 0.6),
                 strokeWidth: 1.2,
                 dashArray: [4, 4],
@@ -483,7 +542,7 @@ class _Chart extends StatelessWidget {
             final spots = response?.lineBarSpots;
             if (spots == null || spots.isEmpty) return;
             // Select on tap and while dragging, so the marker follows the finger.
-            onSelect(spots.first.x.toInt());
+            onSelect(days[spots.first.x.toInt()].date);
           },
         ),
         lineBarsData: [
@@ -491,6 +550,204 @@ class _Chart extends StatelessWidget {
             if (visible.contains(m.key)) _line(m.color, m.pick),
         ],
       ),
+    );
+  }
+}
+
+/// The dasha sub-periods (pratyantardasha) covering the shown days, with
+/// their full date spans — these are the slow backdrop behind the daily lines.
+class _PeriodStrip extends StatelessWidget {
+  final List<MindEnergyDay> days;
+  const _PeriodStrip({required this.days});
+
+  static String _fmt(String? iso) {
+    final dt = iso == null ? null : DateTime.tryParse(iso);
+    return dt == null ? '?' : DateFormat('d MMM').format(dt);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final periods = <MindEnergyPeriod>[];
+    for (final d in days) {
+      final p = d.period;
+      if (p?.pratyantardasha == null) continue;
+      if (periods.isEmpty ||
+          periods.last.pratyantardasha != p!.pratyantardasha ||
+          periods.last.pratyantardashaStart != p.pratyantardashaStart) {
+        periods.add(p!);
+      }
+    }
+    if (periods.isEmpty) return const SizedBox.shrink();
+    final muted = Colors.white.withValues(alpha: 0.6);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'SUB-PERIODS (${periods.first.mahadasha} › ${periods.first.antardasha})',
+          style: TextStyle(
+            color: muted,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final p in periods)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A1745),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: const Color(0xFFB39DDB).withValues(alpha: 0.4),
+                  ),
+                ),
+                child: Text(
+                  '${p.pratyantardasha} · ${_fmt(p.pratyantardashaStart)} – ${_fmt(p.pratyantardashaEnd)}',
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Average of each visible metric for this month next to the month before,
+/// with the change — the direct month-to-month comparison.
+class _MonthAverages extends StatelessWidget {
+  final MindEnergyMonth month;
+  final MindEnergyMonth? previous;
+  final Set<String> visible;
+  const _MonthAverages({
+    required this.month,
+    required this.previous,
+    required this.visible,
+  });
+
+  static double? _avg(MindEnergyMonth? m, double Function(MindEnergyDay) pick) {
+    final days = (m?.days ?? const <MindEnergyDay>[])
+        .where((d) => d.dayOfMonth > 0)
+        .toList();
+    if (days.isEmpty) return null;
+    return days.map(pick).reduce((a, b) => a + b) / days.length;
+  }
+
+  static String _name(String yyyyMm, String fallback) {
+    final dt = DateTime.tryParse('$yyyyMm-01');
+    return dt == null ? fallback : DateFormat('MMM').format(dt);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final metrics = _metrics.where((m) => visible.contains(m.key)).toList();
+    final headStyle = TextStyle(
+      color: Colors.white.withValues(alpha: 0.6),
+      fontSize: 11,
+      fontWeight: FontWeight.w700,
+    );
+    final prevName = previous == null
+        ? 'Last month'
+        : _name(previous!.month, 'Last month');
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1745),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+      ),
+      child: Table(
+        columnWidths: const {0: FlexColumnWidth(1.6)},
+        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+        children: [
+          TableRow(
+            children: [
+              Text('MONTHLY AVERAGE', style: headStyle),
+              Text(prevName, textAlign: TextAlign.right, style: headStyle),
+              Text(
+                _name(month.month, 'This month'),
+                textAlign: TextAlign.right,
+                style: headStyle,
+              ),
+            ],
+          ),
+          for (final metric in metrics)
+            TableRow(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    metric.label,
+                    style: const TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: _AvgCell(
+                    value: _avg(previous, metric.pick),
+                    color: metric.color.withValues(alpha: 0.6),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: _AvgCell(
+                    value: _avg(month, metric.pick),
+                    previous: _avg(previous, metric.pick),
+                    color: metric.color,
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AvgCell extends StatelessWidget {
+  final double? value;
+  final double? previous;
+  final Color color;
+  const _AvgCell({required this.value, this.previous, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    if (value == null) {
+      return const Text(
+        '–',
+        textAlign: TextAlign.right,
+        style: TextStyle(color: Colors.white54),
+      );
+    }
+    final diff = previous == null ? null : (value! - previous!).round();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          value!.round().toString(),
+          style: TextStyle(
+            color: color,
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        if (diff != null && diff != 0)
+          Text(
+            diff > 0 ? '+$diff' : '−${-diff}',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.55),
+              fontSize: 10,
+            ),
+          ),
+      ],
     );
   }
 }
@@ -525,6 +782,16 @@ class _DayCard extends StatelessWidget {
               fontWeight: FontWeight.w700,
             ),
           ),
+          if (day.period?.pratyantardasha != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              'Dasha ${day.period!.mahadasha} › ${day.period!.antardasha} › ${day.period!.pratyantardasha}',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.55),
+                fontSize: 12,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           LayoutBuilder(
             builder: (context, constraints) => Wrap(
@@ -690,7 +957,10 @@ class _Explainer extends StatelessWidget {
           'Focus reflects mental clarity and concentration. '
           'Irritability shows how short your temper may run. '
           'Steadiness reflects how emotionally settled you may feel. All are '
-          'scored 0–100 each day from the transits against your birth chart: under 25 is very low, 25–44 low, 45–59 moderate, 60–79 high, 80+ very high.',
+          'scored 0–100 each day from the transits against your birth chart: under 25 is very low, 25–44 low, 45–59 moderate, 60–79 high, 80+ very high. '
+          'The Moon moves the daily line; slower factors — your dasha sub-period and Saturn — '
+          'set the backdrop for weeks at a time. The dashed lines mark each '
+          "month's average; compare it with last month in the table below the chart.",
           style: muted,
         ),
         const SizedBox(height: 8),
