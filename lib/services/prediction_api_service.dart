@@ -463,7 +463,8 @@ class PredictionApiService {
       ),
       'month': month,
     };
-    final cacheBody = {...body, '_schema': 1};
+    // _schema 2: sub-period (pratyantardasha) + Saturn retrograde drivers.
+    final cacheBody = {...body, '_schema': 2};
 
     if (!forceRefresh) {
       final cached = ApiCacheService.read(endpoint, cacheBody,
